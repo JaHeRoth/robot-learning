@@ -1,0 +1,12 @@
+[workspace]
+authors = ["Jacob H. Rothschild"]
+channels = ["conda-forge"]
+name = "robot-learning"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = ">=3.14.7,<3.15"
+wandb = ">=0.28.2,<0.29"
