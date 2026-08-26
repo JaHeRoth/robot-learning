@@ -1,5 +1,6 @@
 projecthandover.md
 outputs/
+.vscode/
 
 # pixi environments
 .pixi/*
