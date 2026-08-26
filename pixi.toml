@@ -6,6 +6,7 @@ platforms = [{ platform = "osx-arm64", macos = "14.0" }]
 version = "0.1.0"
 
 [tasks]
+eval = "python scripts/eval_quiet.py"
 
 [dependencies]
 python = ">=3.12,<3.13"
