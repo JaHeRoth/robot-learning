@@ -1,0 +1,3 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python"
+}
