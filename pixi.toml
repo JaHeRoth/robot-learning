@@ -5,6 +5,11 @@ name = "robot-learning"
 platforms = [{ platform = "osx-arm64", macos = "14.0" }]
 version = "0.1.0"
 
+# PyTorch's pip wheel and conda-forge ffmpeg each bundle LLVM's OpenMP runtime;
+# loading both aborts the process without this override (decode correctness verified).
+[activation.env]
+KMP_DUPLICATE_LIB_OK = "TRUE"
+
 [tasks]
 eval = "python scripts/eval_quiet.py"
 
@@ -14,6 +19,7 @@ wandb = ">=0.28.2,<0.29"
 ipykernel = ">=7.3.0,<8"
 ipywidgets = ">=8.1.9,<9"
 matplotlib = ">=3.11.1,<4"
+ffmpeg = ">=7,<8"
 
 [pypi-dependencies]
 lerobot = { version = ">=0.3.3, <0.4", extras = ["pusht"] }
