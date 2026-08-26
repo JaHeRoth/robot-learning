@@ -2,7 +2,7 @@
 authors = ["Jacob H. Rothschild"]
 channels = ["conda-forge"]
 name = "robot-learning"
-platforms = [{ platform = "osx-arm64", macos = "14.0" }]
+platforms = [{ platform = "osx-arm64", macos = "14.0" }, { platform = "linux-64", glibc = "2.31" }]
 version = "0.1.0"
 
 # PyTorch's pip wheel and conda-forge ffmpeg each bundle LLVM's OpenMP runtime;
