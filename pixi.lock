@@ -33,9 +33,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/ipykernel-7.3.0-pyh01cf8df_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ipython-9.16.1-pyh53cf698_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ipython_pygments_lexers-1.1.1-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/ipywidgets-8.1.9-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jedi-0.20.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyter_client-8.9.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/jupyter_core-5.9.1-pyhc90fa1f_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_widgets-3.0.17-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/matplotlib-inline-0.2.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/nest-asyncio2-1.7.2-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/opentelemetry-api-1.44.0-pyhd8ed1ab_0.conda
@@ -63,6 +65,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/urllib3-2.7.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wcwidth-0.8.2-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/widgetsnbextension-4.0.16-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/backports.zstd-1.7.0-py312h1a36842_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/brotli-python-1.2.0-py312ha52686f_3.conda
@@ -443,6 +446,23 @@ packages:
   run_exports: {}
   size: 13993
   timestamp: 1737123723464
+- conda: https://conda.anaconda.org/conda-forge/noarch/ipywidgets-8.1.9-pyhd8ed1ab_0.conda
+  sha256: c391fe12c24fce4f8380f44ebdfb62a5ecdbf0ee168e7db7ea9baf3527eec003
+  md5: 1efaf89bb5d9a6ff2ce5f84d25678f53
+  depends:
+  - comm >=0.1.3
+  - ipython >=6.1.0
+  - jupyterlab_widgets >=3.0.17,<3.1.0
+  - python >=3.10
+  - traitlets >=4.3.1
+  - widgetsnbextension >=4.0.16,<4.1.0
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/ipywidgets?source=compressed-mapping
+  run_exports: {}
+  size: 115707
+  timestamp: 1787052940568
 - conda: https://conda.anaconda.org/conda-forge/noarch/jedi-0.20.0-pyhcf101f3_0.conda
   sha256: 744143551c1c7b528b82533fb641b9d7db20b2203abc4c2635c387fa6c089fc3
   md5: c2b3d37aa1411031126036ee76a8a861
@@ -494,6 +514,21 @@ packages:
   run_exports: {}
   size: 65503
   timestamp: 1760643864586
+- conda: https://conda.anaconda.org/conda-forge/noarch/jupyterlab_widgets-3.0.17-pyhcf101f3_0.conda
+  sha256: 697c4a5b4771e8fbd5a9bbb614899982c7e586eafaf123c210f9d1794436f00a
+  md5: 1fb3f0d175d6e92f56139fb46a17aa2d
+  depends:
+  - python >=3.10
+  - python
+  constrains:
+  - jupyterlab >=4,<5
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/jupyterlab-widgets?source=compressed-mapping
+  run_exports: {}
+  size: 219589
+  timestamp: 1787045328396
 - conda: https://conda.anaconda.org/conda-forge/noarch/matplotlib-inline-0.2.2-pyhd8ed1ab_0.conda
   sha256: 35b43d7343f74452307fd018a1cca92b8f68961ff8e2ab6a81ce0a703c9a3764
   md5: 9acc1c385be401d533ff70ef5b50dae6
@@ -850,6 +885,18 @@ packages:
   run_exports: {}
   size: 132415
   timestamp: 1782771807703
+- conda: https://conda.anaconda.org/conda-forge/noarch/widgetsnbextension-4.0.16-pyhd8ed1ab_0.conda
+  sha256: bd909d9845ff269f5487a83654d6b8fe220c73148c47d602f4ee9e1283829212
+  md5: 4e3aff9f40afb392477584e6a1a45b6f
+  depends:
+  - python >=3.10
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/widgetsnbextension?source=compressed-mapping
+  run_exports: {}
+  size: 901988
+  timestamp: 1787044664327
 - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
   sha256: 210bd31c22bb88f5e2a167df24c95bb5f152b2ada7502f9b8c49d1f5366db423
   md5: ba3dcdc8584155c97c648ae9c044b7a3
