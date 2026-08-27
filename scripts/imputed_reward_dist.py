@@ -52,22 +52,21 @@ fig.savefig("outputs/imputed_reward_boot_qq.png", dpi=150, bbox_inches="tight")
 plt.show()
 
 # %%
-# Convergence to normality vs n: skewness of the bootstrap mean at resample
-# size n. Theory (Edgeworth): skew(mean of n) = skew(population)/sqrt(n),
-# so on log-log axes these should fall on slope -1/2 lines.
+# Endpoint gap between normal-theory and bootstrap-percentile 95% CIs, per n
 ns = [10, 25, 50, 100, 200]
 fig, ax = plt.subplots(figsize=(7, 5))
 for name, x in samples.items():
-    skews = [
-        abs(stats.skew(x[rng.integers(len(x), size=(B, n))].mean(axis=1)))
-        for n in ns
-    ]
-    ax.plot(ns, skews, "--o", label=name)
-ax.set(xscale="log", yscale="log", xlabel="n (episodes averaged)",
-       ylabel="|skewness| of bootstrap mean")
+    gaps = []
+    for n in ns:
+        boot = x[rng.integers(len(x), size=(B, n))].mean(axis=1)
+        normal = x.mean() + 1.96 * x.std(ddof=1) / n**0.5 * np.array([-1, 1])
+        percentile = np.percentile(boot, [2.5, 97.5])
+        gaps.append(np.abs(normal - percentile).max())
+    ax.plot(ns, gaps, "--o", label=name)
+ax.set(xscale="log", xlabel="n (episodes)", ylabel="CI endpoint gap (reward)")
 ax.grid(True, which="both", alpha=0.3)
 ax.legend()
-fig.savefig("outputs/imputed_reward_skew_vs_n.png", dpi=150, bbox_inches="tight")
+fig.savefig("outputs/imputed_reward_ci_gap_vs_n.png", dpi=150, bbox_inches="tight")
 plt.show()
 
 # %%
