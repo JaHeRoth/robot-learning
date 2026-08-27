@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python",
+  "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
+  "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi",
+  "jupyter.notebookFileRoot": "${workspaceFolder}"
+}

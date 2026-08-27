@@ -1,6 +1,7 @@
 context/
 outputs/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 
 # pixi environments
 .pixi/*
