@@ -32,6 +32,7 @@ plt.xlabel("n_action_steps")
 plt.xscale("log")
 plt.grid()
 plt.legend()
+plt.savefig("outputs/replan_interval_sweep.png", dpi=150, bbox_inches="tight")
 plt.show()
 
 # %%
