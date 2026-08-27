@@ -28,6 +28,8 @@ for name in names:
             f"outputs/train/{name}/checkpoints/{checkpoint}/pretrained_model"
         ).to("cuda")
         for replan_interval in [16, 24, 32]:
+            if replan_interval > policy.config.chunk_size:
+                continue
             policy.config.n_action_steps = replan_interval
             realizations = rollout(env, policy, seeds=list(range(n_seeds)))
             # Successful episodes contribute 0.95 from their success step through
