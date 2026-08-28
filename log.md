@@ -1,5 +1,13 @@
 # Log
 
+## 27 August 2026
+
+- Built a Python eval pipeline: per-episode results to parquet, held-out eval seeds, custom avg_sum_imputed_reward metric
+- Ran ~15 training runs tuning one hyperparameter at a time, plus combos and seed replicas
+- Best recipe (batch 64, lr 2e-5, 7 decoder layers): 57% ± 4% success (95% CI, 600 held-out episodes), vs ~44% best previously reported for ACT on PushT
+- Reimplemented LeRobot's rollout function, bit-exact after two fun determinism bugs
+- [Posted day-3 update on X](https://x.com/ja_rothschild/status/2093227915689472365) with the results table
+
 ## 26 August 2026
 
 - Explored the PushT dataset
