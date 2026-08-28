@@ -37,10 +37,31 @@ class ACTEncoder(Module):
         return z_mean, z_logvar
 
 
+def _make_latent_img_pos_embedding(rows: int, cols: int, dim: int):
+    assert dim % 4 == 0
+    D = dim // 2
+    T = 10000
+    w = 1 / T ** (2 * torch.arange(D // 2) / D)
+    embeddings = []
+    for row in range(rows):
+        for col in range(cols):
+            row_embedding = torch.stack([(row * w).sin(), (row * w).cos()]).permute(1, 0).flatten()
+            col_embedding = torch.stack([(col * w).sin(), (col * w).cos()]).permute(1, 0).flatten()
+            embeddings.append(torch.cat([row_embedding, col_embedding]))
+    return torch.stack(embeddings).reshape(rows, cols, dim)
+
+
+
 class ACTDecoder(Module):
-    def __init__(self, n_joints: int, d_model: int, z_dim: int, latent_img_depth: int):
-        self.latent_img_pos_embedding = TODO # sin-cos or learnable tensor
-        self.latent_img_embedder = Linear(latent_img_depth, d_model) # linear layer
+    def __init__(self, n_joints: int, d_model: int, z_dim: int, latent_img_size: tuple):
+        super().__init__()
+        self.register_buffer(
+            name="latent_img_pos_embedding",
+            tensor=_make_latent_img_pos_embedding(
+                rows=latent_img_size[0], cols=latent_img_size[1], dim=d_model
+            )
+        )
+        self.latent_img_embedder = Linear(latent_img_size[2], d_model) # linear layer
         self.angle_decoder_embedder = Linear(n_joints, d_model)
         self.z_embedder = Linear(z_dim, d_model)
         self.decoder = Transformer(
@@ -87,7 +108,7 @@ class ACT(Module):
         self.rng = np.random.default_rng(seed=seed)
         self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim)
         self.image_encoder = TODO # resnet CNN
-        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim)
+        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim, latent_img_size=TODO)
 
     def forward(
         self,
