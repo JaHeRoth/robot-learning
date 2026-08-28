@@ -77,21 +77,25 @@ class ACTDecoder(Module):
 class ACT(Module):
     def __init__(self, n_joints: int, seed: int | None):
         super().__init__()
+        self.z_dim = 32
         self.rng = np.random.default_rng(seed=seed)
-        self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=32)
+        self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim)
         self.image_encoder = TODO # resnet CNN
-        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=32)
+        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim)
 
     def forward(
         self,
         img: Tensor,  # (batch_size, n_cameras, n_channels, height, width)
         angle: Tensor,  # (batch_size, n_joints)
-        chunk: Tensor,  # (batch_size, chunk_len, n_joints)
+        chunk: Tensor | None,  # (batch_size, chunk_len, n_joints)
     ):
-        z_mean, z_logvar = self.chunk_encoder(angle, chunk)
         batch_size = angle.size(0)
-        eps = self.rng.standard_normal(size=batch_size)
-        z = z_mean + (z_logvar / 2).exp() * eps
+        if chunk is None:  # Inference
+            z = torch.zeros(batch_size, self.z_dim)
+        else:  # Training
+            z_mean, z_logvar = self.chunk_encoder(angle, chunk)
+            eps = self.rng.standard_normal(size=batch_size)
+            z = z_mean + (z_logvar / 2).exp() * eps
 
         latent_img = self.image_encoder(img)
         next_chunk = self.chunk_decoder(latent_img, angle, z)
