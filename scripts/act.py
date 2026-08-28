@@ -1,9 +1,23 @@
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
 from torch.nn import Module, Transformer, TransformerEncoder, TransformerEncoderLayer, Linear, Embedding, Sequential
 from torchvision.models import resnet18, ResNet18_Weights
 from torchvision.ops.misc import FrozenBatchNorm2d
 from torchvision.transforms import Normalize
+
+
+@dataclass
+class ACTConfig:
+    # Defaults from the ACT paper appendix (Zhao et al. 2023)
+    d_model: int = 512
+    z_dim: int = 32
+    nhead: int = 8
+    dim_feedforward: int = 3200
+    n_encoder_layers: int = 4
+    n_decoder_layers: int = 7
+    dropout: float = 0.1
 
 
 def _make_sequence_pos_embedding(length: int, dim: int):
@@ -18,22 +32,25 @@ def _make_sequence_pos_embedding(length: int, dim: int):
 
 
 class ACTEncoder(Module):
-    def __init__(self, action_dim: int, d_model: int, z_dim: int, chunk_len: int):
+    def __init__(self, action_dim: int, chunk_len: int, cfg: ACTConfig):
         super().__init__()
-        self.cls_embedding = Embedding(num_embeddings=1, embedding_dim=d_model)
-        self.proprio_embedder = Linear(action_dim, d_model)
-        self.chunk_embedder = Linear(action_dim, d_model)
+        self.cls_embedding = Embedding(num_embeddings=1, embedding_dim=cfg.d_model)
+        self.proprio_embedder = Linear(action_dim, cfg.d_model)
+        self.chunk_embedder = Linear(action_dim, cfg.d_model)
         self.register_buffer(
             name="pos_embedding",
             tensor=_make_sequence_pos_embedding(
-                length=chunk_len + 2, dim=d_model
+                length=chunk_len + 2, dim=cfg.d_model
             )
         )
         self.encoder = TransformerEncoder(
-            TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=3200, dropout=0.1, batch_first=True),
-            num_layers=4,
+            TransformerEncoderLayer(
+                d_model=cfg.d_model, nhead=cfg.nhead, dim_feedforward=cfg.dim_feedforward,
+                dropout=cfg.dropout, batch_first=True,
+            ),
+            num_layers=cfg.n_encoder_layers,
         )
-        self.z_projector = Linear(d_model, z_dim * 2)
+        self.z_projector = Linear(cfg.d_model, cfg.z_dim * 2)
 
     def forward(
         self,
@@ -71,22 +88,24 @@ def _make_img_tokens_pos_embedding(rows: int, cols: int, dim: int):
 
 
 class ACTDecoder(Module):
-    def __init__(self, action_dim: int, d_model: int, z_dim: int, chunk_len: int, img_tokens_shape: tuple):
+    def __init__(self, action_dim: int, chunk_len: int, img_tokens_shape: tuple, cfg: ACTConfig):
         super().__init__()
         self.register_buffer(
             name="img_tokens_pos_embedding",
             tensor=_make_img_tokens_pos_embedding(
-                rows=img_tokens_shape[0], cols=img_tokens_shape[1], dim=d_model
+                rows=img_tokens_shape[0], cols=img_tokens_shape[1], dim=cfg.d_model
             )
         )
-        self.img_tokens_embedder = Linear(img_tokens_shape[2], d_model)
-        self.proprio_embedder = Linear(action_dim, d_model)
-        self.z_embedder = Linear(z_dim, d_model)
-        self.decoder_decoder_pos_embedding = Embedding(num_embeddings=chunk_len, embedding_dim=d_model)
+        self.img_tokens_embedder = Linear(img_tokens_shape[2], cfg.d_model)
+        self.proprio_embedder = Linear(action_dim, cfg.d_model)
+        self.z_embedder = Linear(cfg.z_dim, cfg.d_model)
+        self.decoder_decoder_pos_embedding = Embedding(num_embeddings=chunk_len, embedding_dim=cfg.d_model)
         self.decoder = Transformer(
-            d_model=d_model, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1, batch_first=True
+            d_model=cfg.d_model, nhead=cfg.nhead, num_encoder_layers=cfg.n_encoder_layers,
+            num_decoder_layers=cfg.n_decoder_layers, dim_feedforward=cfg.dim_feedforward,
+            dropout=cfg.dropout, batch_first=True,
         )
-        self.action_projector = Linear(d_model, action_dim)
+        self.action_projector = Linear(cfg.d_model, action_dim)
 
     def forward(
         self,
@@ -121,17 +140,20 @@ class ACTDecoder(Module):
 
 
 class ACT(Module):
-    def __init__(self, action_dim: int, chunk_len: int):
+    def __init__(self, action_dim: int, chunk_len: int, cfg: ACTConfig | None = None):
         super().__init__()
-        self.z_dim = 32
-        self.chunk_encoder = ACTEncoder(action_dim=action_dim, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len)
+        cfg = cfg or ACTConfig()
+        self.z_dim = cfg.z_dim
+        self.chunk_encoder = ACTEncoder(action_dim=action_dim, chunk_len=chunk_len, cfg=cfg)
         self.image_encoder = Sequential(
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             *list(
                 resnet18(weights=ResNet18_Weights.IMAGENET1K_V1, norm_layer=FrozenBatchNorm2d).children()
             )[:-2]
         )
-        self.chunk_decoder = ACTDecoder(action_dim=action_dim, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len, img_tokens_shape=(3, 3, 512))
+        self.chunk_decoder = ACTDecoder(
+            action_dim=action_dim, chunk_len=chunk_len, img_tokens_shape=(3, 3, 512), cfg=cfg
+        )
 
     def forward(
         self,
@@ -142,7 +164,7 @@ class ACT(Module):
         batch_size = proprio.size(0)
         if chunk is None:  # Inference
             z_mean, z_logvar = None, None
-            z = torch.zeros(batch_size, self.z_dim).to(img.device)
+            z = torch.zeros(batch_size, self.z_dim, device=img.device)
         else:  # Training
             z_mean, z_logvar = self.chunk_encoder(proprio, chunk)
             eps = torch.randn_like(z_mean)
