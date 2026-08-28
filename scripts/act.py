@@ -24,7 +24,7 @@ class ACTEncoder(Module):
         batch_size = angle.size(0)
         angle_encoder_embedding: Tensor = self.angle_embedder(angle)  # (batch_size, encoder_dim)
         chunk_embedding: Tensor = self.chunk_embedder(chunk)  # (batch_size, chunk_length, encoder_dim)
-        chunk_encoder_input = torch.cat(
+        chunk_encoder_input = torch.cat(  # (batch_size, chunk_length, encoder_dim)
             [
                 self.cls_embedding.expand(batch_size, -1).unsqueeze(1),
                 angle_encoder_embedding.unsqueeze(1),
@@ -32,44 +32,28 @@ class ACTEncoder(Module):
             ],
             dim=1,
         )
-        latent_chunk: Tensor = self.encoder(chunk_encoder_input)
-        z_mean, z_logvar = self.z_projector(latent_chunk[:, 0]).chunk(2, dim=-1)
+        latent_chunk: Tensor = self.encoder(chunk_encoder_input)  # (batch_size, chunk_length, encoder_dim)
+        z_mean, z_logvar = self.z_projector(latent_chunk[:, 0, :]).chunk(2, dim=-1)
         return z_mean, z_logvar
 
 
-class ACT(Module):
-    def __init__(self, n_joints: int, seed: int | None):
-        super().__init__()
-
-        encoder_dim = 512
-        decoder_dim = 512
-        z_dim = 32
-
-        self.rng = np.random.default_rng(seed=seed)
-        self.image_encoder = TODO # resnet CNN
-        
+class ACTDecoder(Module):
+    def __init__(self, n_joints: int, d_model: int, z_dim: int):
         self.decoder = Transformer(
-            d_model=decoder_dim, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1
+            d_model=d_model, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1
         ) # transformer encoder-decoder
         self.latent_img_pos_embedding = TODO # sin-cos or learnable tensor
         self.latent_img_embedder = TODO # linear layer
         
-        self.angle_decoder_embedder = Linear(n_joints, decoder_dim)
-        self.z_embedder = Linear(z_dim, decoder_dim)
+        self.angle_decoder_embedder = Linear(n_joints, d_model)
+        self.z_embedder = Linear(z_dim, d_model)
 
     def forward(
         self,
-        img: Tensor,  # (batch_size, n_cameras, n_channels, height, width)
+        latent_img: Tensor,  # (batch_size, n_cameras, latent_depth, latent_height, latent_width)
         angle: Tensor,  # (batch_size, n_joints)
-        chunk: Tensor,  # (batch_size, chunk_len, n_joints)
-    ):
-        batch_size = img.size(0)
-
-
-        eps = self.rng.standard_normal(size=batch_size)
-        z = z_mean + (z_logvar / 2).exp() * eps
-
-        latent_img: Tensor = self.image_encoder(img)  # (batch_size, n_cameras, latent_depth, latent_height, latent_width)
+        z: Tensor  # (batch_size, z_dim)
+    ) -> Tensor:
         img_tokens = latent_img.permute(0, 1, 3, 4, 2)  # (batch_size, n_cameras, latent_height, latent_width, latent_depth)
         img_embeddings = (
             self.latent_img_embedder(img_tokens)  # (batch_size, n_cameras, latent_height, latent_width, decoder_dim)
@@ -87,5 +71,28 @@ class ACT(Module):
             dim=1,
         )
 
-        next_chunk = self.decoder(decoder_input, TODO)
+        return self.decoder(decoder_input, TODO)
+
+
+class ACT(Module):
+    def __init__(self, n_joints: int, seed: int | None):
+        super().__init__()
+        self.rng = np.random.default_rng(seed=seed)
+        self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=32)
+        self.image_encoder = TODO # resnet CNN
+        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=32)
+
+    def forward(
+        self,
+        img: Tensor,  # (batch_size, n_cameras, n_channels, height, width)
+        angle: Tensor,  # (batch_size, n_joints)
+        chunk: Tensor,  # (batch_size, chunk_len, n_joints)
+    ):
+        z_mean, z_logvar = self.chunk_encoder(angle, chunk)
+        batch_size = angle.size(0)
+        eps = self.rng.standard_normal(size=batch_size)
+        z = z_mean + (z_logvar / 2).exp() * eps
+
+        latent_img = self.image_encoder(img)
+        next_chunk = self.chunk_decoder(latent_img, angle, z)
         return next_chunk, z_mean, z_logvar
