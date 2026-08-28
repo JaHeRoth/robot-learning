@@ -18,11 +18,11 @@ def _make_sequence_pos_embedding(length: int, dim: int):
 
 
 class ACTEncoder(Module):
-    def __init__(self, n_joints: int, d_model: int, z_dim: int, chunk_len: int):
+    def __init__(self, action_dim: int, d_model: int, z_dim: int, chunk_len: int):
         super().__init__()
         self.cls_embedding = Embedding(num_embeddings=1, embedding_dim=d_model)
-        self.angle_embedder = Linear(n_joints, d_model)
-        self.chunk_embedder = Linear(n_joints, d_model)
+        self.proprio_embedder = Linear(action_dim, d_model)
+        self.chunk_embedder = Linear(action_dim, d_model)
         self.register_buffer(
             name="pos_embedding",
             tensor=_make_sequence_pos_embedding(
@@ -37,16 +37,16 @@ class ACTEncoder(Module):
 
     def forward(
         self,
-        angle: Tensor,  # (batch_size, n_joints)
-        chunk: Tensor,  # (batch_size, chunk_len, n_joints)
+        proprio: Tensor,  # (batch_size, action_dim)
+        chunk: Tensor,  # (batch_size, chunk_len, action_dim)
     ) -> tuple[Tensor, Tensor]:
-        batch_size = angle.size(0)
-        angle_encoder_embedding: Tensor = self.angle_embedder(angle)  # (batch_size, encoder_dim)
+        batch_size = proprio.size(0)
+        proprio_encoder_embedding: Tensor = self.proprio_embedder(proprio)  # (batch_size, encoder_dim)
         chunk_embedding: Tensor = self.chunk_embedder(chunk)  # (batch_size, chunk_length, encoder_dim)
         chunk_encoder_input = torch.cat(  # (batch_size, chunk_length + 2, encoder_dim)
             [
                 self.cls_embedding.weight.expand(batch_size, -1).unsqueeze(1),
-                angle_encoder_embedding.unsqueeze(1),
+                proprio_encoder_embedding.unsqueeze(1),
                 chunk_embedding
             ],
             dim=1,
@@ -71,7 +71,7 @@ def _make_img_tokens_pos_embedding(rows: int, cols: int, dim: int):
 
 
 class ACTDecoder(Module):
-    def __init__(self, n_joints: int, d_model: int, z_dim: int, chunk_len: int, img_tokens_shape: tuple):
+    def __init__(self, action_dim: int, d_model: int, z_dim: int, chunk_len: int, img_tokens_shape: tuple):
         super().__init__()
         self.register_buffer(
             name="img_tokens_pos_embedding",
@@ -79,19 +79,19 @@ class ACTDecoder(Module):
                 rows=img_tokens_shape[0], cols=img_tokens_shape[1], dim=d_model
             )
         )
-        self.img_tokens_embedder = Linear(img_tokens_shape[2], d_model) # linear layer
-        self.angle_embedder = Linear(n_joints, d_model)
+        self.img_tokens_embedder = Linear(img_tokens_shape[2], d_model)
+        self.proprio_embedder = Linear(action_dim, d_model)
         self.z_embedder = Linear(z_dim, d_model)
         self.decoder_decoder_pos_embedding = Embedding(num_embeddings=chunk_len, embedding_dim=d_model)
         self.decoder = Transformer(
             d_model=d_model, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1, batch_first=True
         )
-        self.action_projector = Linear(d_model, n_joints)
+        self.action_projector = Linear(d_model, action_dim)
 
     def forward(
         self,
         latent_imgs: Tensor,  # (batch_size, n_cameras, latent_depth, latent_height, latent_width)
-        angle: Tensor,  # (batch_size, n_joints)
+        proprio: Tensor,  # (batch_size, action_dim)
         z: Tensor,  # (batch_size, z_dim)
     ) -> Tensor:
         img_tokens = latent_imgs.permute(0, 1, 3, 4, 2)  # (batch_size, n_cameras, latent_height, latent_width, latent_depth)
@@ -100,13 +100,13 @@ class ACTDecoder(Module):
             + self.img_tokens_pos_embedding
         ).flatten(1, 3)  # (batch_size, n_cameras * latent_height * latent_width, decoder_dim)
 
-        angle_embedding = self.angle_embedder(angle)  # (batch_size, decoder_dim)
+        proprio_embedding = self.proprio_embedder(proprio)  # (batch_size, decoder_dim)
         z_embedding = self.z_embedder(z)  # (batch_size, decoder_dim)
 
         decoder_encoder_input = torch.cat(  # (batch_size, n_cameras * latent_height * latent_width + 2, decoder_dim)
             [
                 img_embeddings,
-                angle_embedding.unsqueeze(1),
+                proprio_embedding.unsqueeze(1),
                 z_embedding.unsqueeze(1)
             ],
             dim=1,
@@ -121,33 +121,33 @@ class ACTDecoder(Module):
 
 
 class ACT(Module):
-    def __init__(self, n_joints: int, chunk_len: int):
+    def __init__(self, action_dim: int, chunk_len: int):
         super().__init__()
         self.z_dim = 32
-        self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len)
+        self.chunk_encoder = ACTEncoder(action_dim=action_dim, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len)
         self.image_encoder = Sequential(
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             *list(
                 resnet18(weights=ResNet18_Weights.IMAGENET1K_V1, norm_layer=FrozenBatchNorm2d).children()
             )[:-2]
         )
-        self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len, img_tokens_shape=(3, 3, 512))
+        self.chunk_decoder = ACTDecoder(action_dim=action_dim, d_model=512, z_dim=self.z_dim, chunk_len=chunk_len, img_tokens_shape=(3, 3, 512))
 
     def forward(
         self,
         img: Tensor,  # (batch_size, n_cameras, n_channels, height, width), float in [0, 1]
-        angle: Tensor,  # (batch_size, n_joints)
-        chunk: Tensor | None,  # (batch_size, chunk_len, n_joints)
+        proprio: Tensor,  # (batch_size, action_dim)
+        chunk: Tensor | None,  # (batch_size, chunk_len, action_dim)
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
-        batch_size = angle.size(0)
+        batch_size = proprio.size(0)
         if chunk is None:  # Inference
             z_mean, z_logvar = None, None
             z = torch.zeros(batch_size, self.z_dim).to(img.device)
         else:  # Training
-            z_mean, z_logvar = self.chunk_encoder(angle, chunk)
+            z_mean, z_logvar = self.chunk_encoder(proprio, chunk)
             eps = torch.randn_like(z_mean)
             z = z_mean + (z_logvar / 2).exp() * eps
 
         latent_imgs = self.image_encoder(img.flatten(0, 1)).unflatten(0, img.shape[:2])
-        next_chunk = self.chunk_decoder(latent_imgs, angle, z)
+        next_chunk = self.chunk_decoder(latent_imgs, proprio, z)
         return next_chunk, z_mean, z_logvar
