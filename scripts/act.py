@@ -3,6 +3,40 @@ from torch import Tensor
 from torch.nn import Module, Parameter, Transformer, TransformerEncoder, TransformerEncoderLayer, Linear
 import numpy as np
 
+
+class ACTEncoder(Module):
+    def __init__(self, n_joints: int, d_model: int, z_dim: int):
+        super().__init__()
+        self.encoder = TransformerEncoder(
+            TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=3200, dropout=0.1, batch_first=True),
+            num_layers=4,
+        )
+        self.cls_embedding = Parameter(torch.randn(d_model))  # TODO: Initialization magnitudes may be off
+        self.angle_embedder = Linear(n_joints, d_model)
+        self.chunk_embedder = Linear(n_joints, d_model)
+        self.z_projector = Linear(d_model, z_dim * 2)
+
+    def forward(
+        self,
+        angle: Tensor,  # (batch_size, n_joints)
+        chunk: Tensor,  # (batch_size, chunk_len, n_joints)
+    ) -> tuple[Tensor, Tensor]:
+        batch_size = angle.size(0)
+        angle_encoder_embedding: Tensor = self.angle_embedder(angle)  # (batch_size, encoder_dim)
+        chunk_embedding: Tensor = self.chunk_embedder(chunk)  # (batch_size, chunk_length, encoder_dim)
+        chunk_encoder_input = torch.cat(
+            [
+                self.cls_embedding.expand(batch_size, -1).unsqueeze(1),
+                angle_encoder_embedding.unsqueeze(1),
+                chunk_embedding
+            ],
+            dim=1,
+        )
+        latent_chunk: Tensor = self.encoder(chunk_encoder_input)
+        z_mean, z_logvar = self.z_projector(latent_chunk[:, 0]).chunk(2, dim=-1)
+        return z_mean, z_logvar
+
+
 class ACT(Module):
     def __init__(self, n_joints: int, seed: int | None):
         super().__init__()
@@ -13,19 +47,13 @@ class ACT(Module):
 
         self.rng = np.random.default_rng(seed=seed)
         self.image_encoder = TODO # resnet CNN
-        self.chunk_encoder = TransformerEncoder(
-            TransformerEncoderLayer(d_model=encoder_dim, nhead=8, dim_feedforward=3200, dropout=0.1, batch_first=True),
-            num_layers=4,
-        ) # transformer encoder
+        
         self.decoder = Transformer(
             d_model=decoder_dim, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1
         ) # transformer encoder-decoder
         self.latent_img_pos_embedding = TODO # sin-cos or learnable tensor
         self.latent_img_embedder = TODO # linear layer
-        self.cls_embedding = Parameter(torch.randn(encoder_dim))  # TODO: Initialization magnitudes may be off
-        self.angle_encoder_embedder = Linear(n_joints, encoder_dim)
-        self.chunk_embedder = Linear(n_joints, encoder_dim)
-        self.z_projector = Linear(encoder_dim, z_dim * 2)
+        
         self.angle_decoder_embedder = Linear(n_joints, decoder_dim)
         self.z_embedder = Linear(z_dim, decoder_dim)
 
@@ -37,18 +65,7 @@ class ACT(Module):
     ):
         batch_size = img.size(0)
 
-        angle_encoder_embedding: Tensor = self.angle_encoder_embedder(angle)  # (batch_size, encoder_dim)
-        chunk_embedding: Tensor = self.chunk_embedder(chunk)  # (batch_size, chunk_length, encoder_dim)
-        chunk_encoder_input = torch.cat(
-            [
-                self.cls_embedding.expand(batch_size, -1).unsqueeze(1),
-                angle_encoder_embedding.unsqueeze(1),
-                chunk_embedding
-            ],
-            dim=1,
-        )
-        latent_chunk: Tensor = self.chunk_encoder(chunk_encoder_input)
-        z_mean, z_logvar = self.z_projector(latent_chunk[:, 0]).chunk(2, dim=-1)
+
         eps = self.rng.standard_normal(size=batch_size)
         z = z_mean + (z_logvar / 2).exp() * eps
 
@@ -71,4 +88,4 @@ class ACT(Module):
         )
 
         next_chunk = self.decoder(decoder_input, TODO)
-        return next_chunk
+        return next_chunk, z_mean, z_logvar
