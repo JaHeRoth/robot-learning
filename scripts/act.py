@@ -1,7 +1,6 @@
 import torch
 from torch import Tensor
 from torch.nn import Module, Parameter, Transformer, TransformerEncoder, TransformerEncoderLayer, Linear
-import numpy as np
 
 
 class ACTEncoder(Module):
@@ -65,7 +64,7 @@ class ACTDecoder(Module):
         self.angle_decoder_embedder = Linear(n_joints, d_model)
         self.z_embedder = Linear(z_dim, d_model)
         self.decoder = Transformer(
-            d_model=d_model, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1
+            d_model=d_model, nhead=8, num_encoder_layers=4, num_decoder_layers=7, dim_feedforward=3200, dropout=0.1, batch_first=True
         )
         self.action_projector = Linear(d_model, n_joints)
 
@@ -102,10 +101,9 @@ class ACTDecoder(Module):
 
 
 class ACT(Module):
-    def __init__(self, n_joints: int, seed: int | None):
+    def __init__(self, n_joints: int):
         super().__init__()
         self.z_dim = 32
-        self.rng = np.random.default_rng(seed=seed)
         self.chunk_encoder = ACTEncoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim)
         self.image_encoder = TODO # resnet CNN
         self.chunk_decoder = ACTDecoder(n_joints=n_joints, d_model=512, z_dim=self.z_dim, latent_img_size=TODO)
@@ -115,13 +113,14 @@ class ACT(Module):
         img: Tensor,  # (batch_size, n_cameras, n_channels, height, width)
         angle: Tensor,  # (batch_size, n_joints)
         chunk: Tensor | None,  # (batch_size, chunk_len, n_joints)
-    ):
+    ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         batch_size = angle.size(0)
         if chunk is None:  # Inference
-            z = torch.zeros(batch_size, self.z_dim)
+            z_mean, z_logvar = None, None
+            z = torch.zeros(batch_size, self.z_dim).to(img.device)
         else:  # Training
             z_mean, z_logvar = self.chunk_encoder(angle, chunk)
-            eps = self.rng.standard_normal(size=batch_size)
+            eps = torch.randn_like(z_mean)
             z = z_mean + (z_logvar / 2).exp() * eps
 
         latent_img = self.image_encoder(img)
