@@ -1,6 +1,6 @@
 # %%
 import torch
-from scripts.act import ACT
+from scripts.act import ACT, ACTConfig
 
 # %%
 batch_size = 2
@@ -59,7 +59,7 @@ ds = LeRobotDataset(
     "lerobot/pusht",
     delta_timestamps={"action": [i / fps for i in range(chunk_len)]}
 )
-loader = DataLoader(ds, batch_size=8, shuffle=False)
+loader = DataLoader(ds, batch_size=8, shuffle=True)
 batch = next(iter(loader))
 img = batch["observation.image"].unsqueeze(1).cuda()
 proprio = batch["observation.state"].cuda()
@@ -67,7 +67,7 @@ proprio = (proprio - proprio.mean(axis=0)) / proprio.std(axis=0)
 chunk = batch["action"].cuda()
 chunk = (chunk - chunk.mean(axis=0)) / chunk.std(axis=0)
 
-act = ACT(action_dim=2, chunk_len=chunk_len).cuda()
+act = ACT(action_dim=2, chunk_len=chunk_len, cfg=ACTConfig(dropout=0.0)).cuda()
 opt = AdamW(act.parameters(), lr=1e-4)
 losses = []
 for _ in tqdm(range(1000)):
