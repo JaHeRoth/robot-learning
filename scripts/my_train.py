@@ -83,27 +83,28 @@ def my_train():
                 print(f"Step {step}/{num_batches}: Loss={rolling_avg_loss}")
                 avg_losses.append(rolling_avg_loss)
                 rolling_avg_loss = 0.0
-            if step % eval_every == 0:
-                model.eval()
-                with torch.no_grad():
-                    policy = TODO
-                    seeds = list(range(n_envs))
-                    result = my_rollout(env, policy, seeds)
-                    reward, success, done = result["reward"], result["success"], result["done"]# Successful episodes contribute 0.95 from their success step through
-                    # the horizon; failed episodes keep their real rewards throughout.
-                    succeeded = success.any(dim=1, keepdim=True)
-                    mask = done & succeeded
-                    imputed_rewards = reward * ~mask + 0.95 * mask
-                    sum_imputed = (
-                        imputed_rewards.sum(dim=1)
-                        + 0.95 * (horizon - imputed_rewards.shape[1])
-                    )
-                    avg_sum_imputed_reward = sum_imputed.mean()
-                    avg_sum_imputed_rewards.append(avg_sum_imputed_reward.item())
-                    success_rate = succeeded.float().mean()
-                    success_rates.append(success_rate.item())
-                    print(f"{avg_sum_imputed_reward=}, {success_rate=}")
-                model.train()
+            # TODO: Uncomment this and write policy wrapper
+            # if step % eval_every == 0:
+            #     model.eval()
+            #     with torch.no_grad():
+            #         policy = TODO
+            #         seeds = list(range(n_envs))
+            #         result = my_rollout(env, policy, seeds)
+            #         reward, success, done = result["reward"], result["success"], result["done"]# Successful episodes contribute 0.95 from their success step through
+            #         # the horizon; failed episodes keep their real rewards throughout.
+            #         succeeded = success.any(dim=1, keepdim=True)
+            #         mask = done & succeeded
+            #         imputed_rewards = reward * ~mask + 0.95 * mask
+            #         sum_imputed = (
+            #             imputed_rewards.sum(dim=1)
+            #             + 0.95 * (horizon - imputed_rewards.shape[1])
+            #         )
+            #         avg_sum_imputed_reward = sum_imputed.mean()
+            #         avg_sum_imputed_rewards.append(avg_sum_imputed_reward.item())
+            #         success_rate = succeeded.float().mean()
+            #         success_rates.append(success_rate.item())
+            #         print(f"{avg_sum_imputed_reward=}, {success_rate=}")
+            #     model.train()
             if step % checkpoint_every == 0:
                 torch.save(model.state_dict(), f"outputs/my_act/step_{step:06d}.pt")
             step += 1
