@@ -1,5 +1,14 @@
 # Log
 
+## 28 August 2026
+
+- Scaled evals to 5000 held-out seeds per checkpoint; trained 3 seeds of both top configs: batch_size=64 + n_decoder_layers=7 won for every seed
+- Reimplemented ACT in plain PyTorch from the paper, catching a discrepancy between paper and reference implementation (decoder positional embeddings)
+- Validated my implementation via parameter count (exact match with reference), gradient flow and overfitting a single batch
+- Wrote my own training loop on LeRobotDataset, currently training my ACT with the winning hyperparams
+- Extended best run 100k→200k steps: success rate 56.4% → 61.4% ± 1.3% (95% CI), more seeds plus an 800k batch_size=8 run queued
+- [Posted day-4 update on X](https://x.com/ja_rothschild/status/2093584395475247495) about the discrepancy
+
 ## 27 August 2026
 
 - Built a Python eval pipeline: per-episode results to parquet, held-out eval seeds, custom avg_sum_imputed_reward metric
