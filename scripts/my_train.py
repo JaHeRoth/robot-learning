@@ -1,18 +1,16 @@
 from pathlib import Path
 
 import torch
-from scripts.my_rollout import my_rollout
+# from scripts.my_rollout import my_rollout
 from scripts.act import ACT
-import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
-from tqdm import tqdm
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from matplotlib import pyplot as plt
 import numpy as np
-from lerobot.envs.factory import make_env, make_env_config
-from gymnasium.vector import VectorEnv
+# from lerobot.envs.factory import make_env, make_env_config
+# from gymnasium.vector import VectorEnv
 
 def my_train():
     chunk_len = 100
@@ -42,13 +40,21 @@ def my_train():
     model = ACT(action_dim=ds.meta.features["action"]["shape"][0], chunk_len=chunk_len).cuda()
     opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    env = make_env(make_env_config("pusht"), n_envs=n_envs)
-    horizon = env.call("_max_episode_steps")[0]
+    # env = make_env(make_env_config("pusht"), n_envs=n_envs)
+    # horizon = env.call("_max_episode_steps")[0]
 
-    state_mean = ds.meta.stats["observation.state"]["mean"].cuda()
-    state_std = ds.meta.stats["observation.state"]["std"].cuda()
-    action_mean = ds.meta.stats["action"]["mean"].cuda()
-    action_std = ds.meta.stats["action"]["std"].cuda()
+    state_mean = torch.as_tensor(
+        ds.meta.stats["observation.state"]["mean"].cuda(), dtype=torch.float32, device="cuda"
+    )
+    state_std = torch.as_tensor(
+        ds.meta.stats["observation.state"]["std"].cuda(), dtype=torch.float32, device="cuda"
+    )
+    action_mean = torch.as_tensor(
+        ds.meta.stats["action"]["mean"].cuda(), dtype=torch.float32, device="cuda"
+    )
+    action_std = torch.as_tensor(
+        ds.meta.stats["action"]["std"].cuda(), dtype=torch.float32, device="cuda"
+    )
 
     losses = []
     avg_losses = []
