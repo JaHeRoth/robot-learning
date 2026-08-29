@@ -17,7 +17,7 @@ act = ACT(action_dim=action_dim, chunk_len=chunk_len)
 sum(p.numel() for p in ACT(action_dim=2, chunk_len=100).parameters())
 
 # %%
-# Smoke tests
+# # Smoke tests
 # CPU, training
 chunk_pred, z_mean, z_logvar = act(img, proprio, chunk)
 assert chunk_pred.shape == (batch_size, chunk_len, action_dim), "Wrong output dimension"
@@ -33,5 +33,15 @@ assert chunk_pred.is_cuda and z_mean.is_cuda and z_logvar.is_cuda
 # GPU, inference
 chunk_pred, z_mean, z_logvar = act.cuda()(img.cuda(), proprio.cuda(), chunk=None)
 assert chunk_pred.is_cuda
+
+# %%
+# Gradient flow test
+act = ACT(action_dim=action_dim, chunk_len=chunk_len)
+act.zero_grad()
+chunk_pred, z_mean, z_logvar = act(img, proprio, chunk)
+loss = chunk_pred.abs().mean()
+loss.backward()
+for n, p in act.named_parameters():
+    assert p.grad.abs().max() > 0, n
 
 # %%
