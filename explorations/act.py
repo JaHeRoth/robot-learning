@@ -13,6 +13,10 @@ chunk = torch.randn(batch_size, chunk_len, action_dim)
 act = ACT(action_dim=action_dim, chunk_len=chunk_len)
 
 # %%
+# Checksum test (Expecting near 84M)
+sum(p.numel() for p in ACT(action_dim=2, chunk_len=100).parameters())
+
+# %%
 # Smoke tests
 # CPU, training
 chunk_pred, z_mean, z_logvar = act(img, proprio, chunk)
@@ -29,9 +33,5 @@ assert chunk_pred.is_cuda and z_mean.is_cuda and z_logvar.is_cuda
 # GPU, inference
 chunk_pred, z_mean, z_logvar = act.cuda()(img.cuda(), proprio.cuda(), chunk=None)
 assert chunk_pred.is_cuda
-
-# %%
-# Checksum test (Expecting near 84M)
-sum(p.numel() for p in act.parameters())
 
 # %%
