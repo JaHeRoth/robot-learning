@@ -44,16 +44,16 @@ def my_train():
     # horizon = env.call("_max_episode_steps")[0]
 
     state_mean = torch.as_tensor(
-        ds.meta.stats["observation.state"]["mean"].cuda(), dtype=torch.float32, device="cuda"
+        ds.meta.stats["observation.state"]["mean"], dtype=torch.float32, device="cuda"
     )
     state_std = torch.as_tensor(
-        ds.meta.stats["observation.state"]["std"].cuda(), dtype=torch.float32, device="cuda"
+        ds.meta.stats["observation.state"]["std"], dtype=torch.float32, device="cuda"
     )
     action_mean = torch.as_tensor(
-        ds.meta.stats["action"]["mean"].cuda(), dtype=torch.float32, device="cuda"
+        ds.meta.stats["action"]["mean"], dtype=torch.float32, device="cuda"
     )
     action_std = torch.as_tensor(
-        ds.meta.stats["action"]["std"].cuda(), dtype=torch.float32, device="cuda"
+        ds.meta.stats["action"]["std"], dtype=torch.float32, device="cuda"
     )
 
     losses = []
