@@ -80,9 +80,11 @@ def _make_img_tokens_pos_embedding(rows: int, cols: int, dim: int):
     w = 1 / T ** (2 * torch.arange(D // 2) / D)
     embeddings = []
     for row in range(rows):
+        r = (row + 1) / (rows + 1e-6) * 2 * torch.pi
         for col in range(cols):
-            row_embedding = torch.stack([(row * w).sin(), (row * w).cos()]).permute(1, 0).flatten()
-            col_embedding = torch.stack([(col * w).sin(), (col * w).cos()]).permute(1, 0).flatten()
+            c = (col + 1) / (cols + 1e-6) * 2 * torch.pi
+            row_embedding = torch.stack([(r * w).sin(), (r * w).cos()]).permute(1, 0).flatten()
+            col_embedding = torch.stack([(c * w).sin(), (c * w).cos()]).permute(1, 0).flatten()
             embeddings.append(torch.cat([row_embedding, col_embedding]))
     return torch.stack(embeddings).reshape(rows, cols, dim)
 
