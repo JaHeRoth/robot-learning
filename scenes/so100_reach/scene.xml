@@ -1,4 +1,4 @@
-<mujoco model="so_arm100 scene">
+<mujoco model="so_arm100 reach scene">
   <include file="so_arm100.xml"/>
 
   <visual>
@@ -15,6 +15,10 @@
   </asset>
 
   <worldbody>
+    <body mocap="true" name="target" pos="0.2 0 0.02">
+      <geom type="box" contype="0" conaffinity="0" density="0" group="2" rgba="1 0 0 1" size="0.02 0.02 0.02"/>
+    </body>
+    <camera name="front" fovy="45" pos="-0.588 0.239 0.562" xyaxes="-0.368 -0.930 -0.000 0.381 -0.151 0.912"/>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
   </worldbody>
