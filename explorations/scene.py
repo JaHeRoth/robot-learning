@@ -57,25 +57,28 @@ fig.tight_layout()
 plt.show()
 
 # %%
-def sample_q_init_and_target():
+def sample_q_init_and_target(
+    rng: np.random.Generator,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    renderer: mujoco.Renderer,
+) -> tuple[np.ndarray, np.ndarray]:
+    lb, ub = model.jnt_range[:, 0], model.jnt_range[:, 1]
+    center, span = (lb + ub) / 2, ub - lb
+    home = model.key("home").qpos
+
     q_init = (
-        model.key("home").qpos
+        home
         + rng.normal(
             loc=0.0,
-            scale=np.clip(
-                np.minimum(
-                    model.key("home").qpos - lb,
-                    ub - model.key("home").qpos,
-                ) / 2,
-                max=0.05,
-            ),
-            size=len(joint_names),
+            scale=np.clip(np.minimum(home - lb, ub - home) / 2, max=0.05),
+            size=model.njnt,
         )
     ).clip(lb, ub)
 
-    for _ in tqdm(range(100)):
+    for _ in range(100):
         q_target = rng.uniform(
-            center - 0.35 * span, center + 0.35 * span
+            low=center - 0.35 * span, high=center + 0.35 * span
         )
         data.qpos = q_target.copy()
         mujoco.mj_forward(model, data)
@@ -102,7 +105,13 @@ def sample_q_init_and_target():
             return q_init, q_target
     raise RuntimeError("goal sampling failed 100x")
 
-def capture_and_step():
+def capture_and_step(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    renderer: mujoco.Renderer,
+    dataset: LeRobotDataset,
+    task: str,
+) -> None:
     renderer.update_scene(data, camera="front")
     dataset.add_frame(
         {
@@ -115,52 +124,65 @@ def capture_and_step():
     for _ in range(20):
         mujoco.mj_step(model, data)
 
-def generate_expert_trajectory():
+def generate_expert_trajectory(
+    rng: np.random.Generator,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    renderer: mujoco.Renderer,
+    dataset: LeRobotDataset,
+    task: str,
+) -> None:
     mujoco.mj_resetData(model, data)
-    ctrl_steps = rng.integers(50, 100)
-    q_init, q_target = sample_q_init_and_target()
+    ctrl_steps = rng.integers(low=50, high=100)
+    q_init, q_target = sample_q_init_and_target(rng, model, data, renderer)
 
     data.qpos = q_init.copy()
     mujoco.mj_forward(model, data)
 
     for step in range(1, ctrl_steps + 1):
         data.ctrl = q_init + (step / ctrl_steps) * (q_target - q_init)
-        capture_and_step()
+        capture_and_step(model, data, renderer, dataset, task)
     for _ in range(10):
-        capture_and_step()
+        capture_and_step(model, data, renderer, dataset, task)
     dataset.save_episode()
 
+def generate_expert_data() -> LeRobotDataset:
+    num_episodes = 100
+    model = mujoco.MjModel.from_xml_path("scenes/so100_reach/scene.xml")
+    data = mujoco.MjData(model)
+    renderer = mujoco.Renderer(model, height=96, width=96)
+    rng = np.random.default_rng(seed=0)
 
-joint_names = [model.joint(i).name for i in range(model.njnt)]
-task = "Reach the red cube"
-dataset = LeRobotDataset.create(
-    "jaheroth/so100_reach",
-    fps=25,
-    features={
-        "observation.image": {
-            "dtype": "video",
-            "shape": (96, 96, 3),
-            "names": ["height", "width", "channels"],
+    joint_names = [model.joint(i).name for i in range(model.njnt)]
+    dataset = LeRobotDataset.create(
+        repo_id="jaheroth/so100_reach",
+        fps=25,
+        features={
+            "observation.image": {
+                "dtype": "video",
+                "shape": (96, 96, 3),
+                "names": ["height", "width", "channels"],
+            },
+            "observation.state": {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": joint_names,
+            },
+            "action": {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": joint_names,
+            },
         },
-        "observation.state": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": joint_names,
-        },
-        "action": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": joint_names,
-        },
-    },
-    root=f"outputs/so100_reach_{int(time())}"
-)
-rng = np.random.default_rng(0)
-lb, ub = model.jnt_range[:, 0], model.jnt_range[:, 1]
-center, span = (lb + ub) / 2, ub - lb
+        root=f"outputs/so100_reach_{int(time())}",
+    )
 
-num_episodes = 100
-for _ in range(num_episodes):
-    generate_expert_trajectory()
+    for _ in tqdm(range(num_episodes)):
+        generate_expert_trajectory(
+            rng, model, data, renderer, dataset, task="Reach the red cube"
+        )
+    return dataset
+
+expert_dataset = generate_expert_data()
 
 # %%
