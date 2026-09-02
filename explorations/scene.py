@@ -85,16 +85,52 @@ rng = np.random.default_rng(0)
 lb, ub = model.jnt_range[:, 0], model.jnt_range[:, 1]
 center, span = (lb + ub) / 2, ub - lb
 
-q_target = rng.uniform(center - 0.35 * span, center + 0.35 * span)
-data.qpos = q_target.copy()
-mujoco.mj_forward(model, data)
-data.mocap_pos[0] = data.site("tip").xpos.copy()
-
 q_init = (
-    model.key("home").qpos + rng.normal(0.0, 0.05, len(joint_names))
-)
-data.qpos = q_init.copy()
-mujoco.mj_forward(model, data)
+    model.key("home").qpos
+    + rng.normal(
+        loc=0.0,
+        scale=np.clip(
+            np.minimum(
+                model.key("home").qpos - lb,
+                ub - model.key("home").qpos,
+            ) / 2,
+            max=0.05,
+        ),
+        size=len(joint_names),
+    )
+).clip(lb, ub)
+
+for _ in range(100):
+    q_target = rng.uniform(
+        center - 0.35 * span, center + 0.35 * span
+    )
+    data.qpos = q_target.copy()
+    mujoco.mj_forward(model, data)
+    data.mocap_pos[0] = data.site("tip").xpos.copy()
+
+    
+    data.qpos = q_init.copy()
+    mujoco.mj_forward(model, data)
+
+    underground = data.mocap_pos[0][2] < 0.05
+    cramped = np.hypot(data.mocap_pos[0][0], data.mocap_pos[0][1]) < 0.12
+
+    renderer.update_scene(data, camera="front")
+    img = renderer.render()
+    cube_mask = (
+        (img[:, :, 0] > 150)
+        & (img[:, :, 1] < 100)
+        & (img[:, :, 2] < 100)
+    )
+    cube_visible = (
+        cube_mask[5:-5, 5:-5].sum() == cube_mask.sum()
+        and cube_mask.sum() >= 30
+    )
+    if not underground and not cramped and cube_visible:
+        break
+if underground or cramped or not cube_visible:
+    raise Exception
+
 ctrl_steps = rng.integers(50, 100)
 for step in range(1, ctrl_steps + 1):
     data.ctrl = q_init + (step / ctrl_steps) * (q_target - q_init)
