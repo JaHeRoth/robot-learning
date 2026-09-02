@@ -1,5 +1,28 @@
 # Log
 
+## 1 September 2026
+
+- Finished the MIT flow matching and diffusion course (6.S184)
+- Connected DDPM, DDIM and flow matching: wrote a summary of how each reasons from its own perspective, fact-checked against all three papers
+- Built a scripted-expert generator for my SO-100 reach task: goal sampling with rejection filtering, 25 Hz control, recording straight into LeRobotDataset format; first episode recorded and verified
+- [Posted update on X](https://x.com/ja_rothschild/status/2095036719099679012) with the DDPM/DDIM/FM summary
+
+## 31 August 2026
+
+- Wrapped up PushT: batch_size=8 extended to 1.49M steps; matches batch 64 at equal samples but plateaus ~3 points lower; batch 64 far ahead at equal steps or wall-clock
+- Archived 1.02M eval episodes as parquet, published 6 checkpoints to Hugging Face, terminated the cloud box
+- Hackerspace had no physical arms; started building a sim env around the SO-100 instead: goal cube, fingertip site, fixed camera, validated with a 3x3 render grid
+- More servo experiments: separating torque saturation from genuine low-pass filtering (Lissajous plots)
+- [Posted update on X](https://x.com/ja_rothschild/status/2094673837623574535) with the batch-size comparison
+
+## 30 August 2026
+
+- 200k checkpoints per seed: dropping chunk_size=32 wins 2 of 3; best run 66.1% ± 1.3% success (n=5000); 500k extension flat since step 160k
+- My from-scratch ACT: 61.1% ± 1.4% at 100k (n=5000), inside the reference seed distribution
+- Set up MuJoCo with the SO-ARM100 model: viewer, MJCF read-through, servo physics (droop, deadband, saturation)
+- Started the MIT diffusion course as prerequisite for the Diffusion Policy paper
+- [Posted update on X](https://x.com/ja_rothschild/status/2094313091588915223) with a video of the arm throwing a fit in sim
+
 ## 28 August 2026
 
 - Scaled evals to 5000 held-out seeds per checkpoint; trained 3 seeds of both top configs: batch_size=64 + n_decoder_layers=7 won for every seed
