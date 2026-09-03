@@ -4,13 +4,13 @@ from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d
 from torchvision.models import resnet18
 
 
-def _make_sequence_pos_embedding(max_k: int, dim: int):
+def _make_sequence_pos_embedding(length: int, dim: int):
     assert dim % 2 == 0
     T = 10000
     w = 1 / T ** (2 * torch.arange(dim // 2) / dim)
     embeddings = [
         torch.stack([(i * w).sin(), (i * w).cos()]).permute(1, 0).flatten()
-        for i in range(max_k)
+        for i in range(length)
     ]
     return torch.stack(embeddings)
 
@@ -31,10 +31,10 @@ class UNet(Module):
 
 
 class Denoiser(Module):
-    def __init__(self, max_k: int, dim_k_encoding: int = 128):
+    def __init__(self, chain_len: int, dim_k_encoding: int = 128):
         super().__init__()
         step_embedder = Embedding.from_pretrained(
-            _make_sequence_pos_embedding(max_k=max_k, dim=dim_k_encoding)
+            _make_sequence_pos_embedding(length=chain_len, dim=dim_k_encoding)
         )
         self.step_encoder = Sequential(
             step_embedder, Linear(dim_k_encoding, 512), Mish(), Linear(512, dim_k_encoding)
@@ -114,11 +114,12 @@ class ImgsEncoder(Module):
 
 
 class DiffusionPolicy(Module):
-    def __init__(self, chunk_len: int, like_lerobot: bool = True):
+    def __init__(self, chain_len: int, chunk_len: int, like_lerobot: bool = True):
         super().__init__()
+        self.chain_len = chain_len
         self.chunk_len = chunk_len
         self.imgs_encoder = ImgsEncoder(like_lerobot=like_lerobot)
-        self.denoiser = Denoiser()
+        self.denoiser = Denoiser(chain_len=chain_len)
 
     def forward(
         self,
@@ -136,19 +137,35 @@ class DiffusionPolicy(Module):
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
         proprio: Tensor,  # (B, n_obs, dof)
-        method: str = "ddpm"  # TODO: Make enum
+        original: bool = False  # DDPM if true, DDIM if false
     ) -> Tensor:
         chunk = torch.randn(
             proprio.size(0), self.chunk_len, proprio.size(-1), device=imgs.device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        if method == "ddpm":
-            for step in reversed(range(1000)):  # TODO: Don't hardcode step count
-                eps_hat = self.denoiser(imgs_encoding, proprio, torch.tensor([step]), chunk)
-                chunk = TODO
-        elif method == "ddim":
-            raise NotImplementedError
-        # TODO: Support Flow Matching?
+        if original:
+            f = torch.cos(
+                (
+                    torch.arange(self.chain_len + 1, dtype=torch.float32, device=imgs.device) / self.chain_len + 0.008
+                ) / 1.008 * torch.pi / 2
+            ) ** 2
+            alpha_bar_target = f / f[0]
+            beta = (1 - alpha_bar_target[1:] / alpha_bar_target[:1]).clip(max=0.999)
+            alpha = 1 - beta
+            alpha_bar = alpha.cumprod()
+            beta_tilde = (1 - alpha_bar_target[:1]) / (1 - alpha_bar_target[1:]) * beta
+            z = torch.rand(self.chain_len, *chunk.size())  # (chain_len, B, chunk_len, dof)
+            for k in reversed(range(self.chain_len)):
+                step_tensor = torch.full(
+                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
+                )  # (B,)
+                eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
+                chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde.sqrt() * z[k]
         else:
-            raise ValueError
+            for step in reversed(range(self.chain_len // 10)):
+                step_tensor = torch.full(
+                    size=(len(imgs),), fill_value=step, dtype=torch.long, device=imgs.device
+                )  # (B,)
+                eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
+                chunk = TODO
         return chunk
