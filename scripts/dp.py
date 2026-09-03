@@ -60,31 +60,27 @@ class Denoiser(Module):
 class SpatialSoftmax(Module):
     def __init__(self):
         super().__init__()
-        self.sm = Softmax()
+        self.softmax = Softmax(dim=-1)
 
     def forward(
         self,
-        x: Tensor,  # (B * n_obs, trunk_channels, trunk_height, trunk_width)
-        n_obs: int,
+        x: Tensor,  # (B * n_obs, conv_channels, trunk_height, trunk_width)
     ):
         trunk_height, trunk_width = x.shape[2:]
-        pos_row = torch.arange(trunk_height).unsqueeze(1).expand(x.shape[2:])
-        pos_col = torch.arange(trunk_width).unsqueeze(0).expand_as(pos_row)
+        pos_row = torch.arange(trunk_height).unsqueeze(1).expand(x.shape[2:]).to(x.device)  # (trunk_height, trunk_width)
+        pos_col = torch.arange(trunk_width).unsqueeze(0).expand_as(pos_row).to(x.device)  # (trunk_height, trunk_width)
         pos = torch.stack([pos_row, pos_col])  # (2, trunk_height, trunk_width)
-        x_flat = x.flatten(-2).unsqueeze(2)  # (B * n_obs, trunk_channels, 1, trunk_height * trunk_width)
+        x_flat = x.flatten(-2).unsqueeze(2)  # (B * n_obs, conv_channels, 1, trunk_height * trunk_width)
         pos_flat = pos.reshape(1, 1, 2, -1)  # (1, 1, 2, trunk_height * trunk_width)
-        avg_pos = (self.sm(x_flat) * pos_flat).sum(-1)  # (B * n_obs, trunk_channels, 2)
-        out = avg_pos.unflatten(0, (-1, n_obs)).flatten(1)  # (B, n_obs, trunk_channels * 2)
-        if self.like_lerobot:
-            out = out(self.lerobot_extra)
-        return out
+        avg_pos = (self.softmax(x_flat) * pos_flat).sum(-1)  # (B * n_obs, conv_channels, 2)
+        return avg_pos.flatten(-2)  # (B * n_obs, conv_channels * 2)
 
 
-class DiffusionPolicy(Module):
-    def __init__(self, chunk_len: int, like_lerobot: bool = True):
+class ImgsEncoder(Module):
+    def __init__(self, like_lerobot):
         super().__init__()
-        self.chunk_len = chunk_len
-        self.img_encoder = Sequential(
+        self.like_lerobot = like_lerobot
+        self.trunk = Sequential(
             *list(
                 resnet18(
                     norm_layer=(
@@ -93,18 +89,35 @@ class DiffusionPolicy(Module):
                         )
                     )
                 ).children()
-            )[:-2],
-            Conv2d(in_channels=512, out_channels=32, kernel_size=1),
-            SpatialSoftmax(),
-            *(
-                [
-                    Linear(in_features=64, out_features=64),
-                    ReLU(),
-                ]
-                if like_lerobot
-                else []
-            )
+            )[:-2]
         )
+        self.conv = Conv2d(in_channels=512, out_channels=32, kernel_size=1)
+        self.spatial_softmax = SpatialSoftmax()
+        if like_lerobot:
+            self.lerobot_extra = Sequential(
+                Linear(in_features=64, out_features=64),
+                ReLU(),
+            )
+
+    def forward(
+        self,
+        imgs: Tensor,  # (B, n_obs, n_channels, height, width)
+    ) -> Tensor:
+        trunk_in = imgs.flatten(start_dim=0, end_dim=1)  # (B * n_obs, n_channels, height, width)
+        trunk_out = self.trunk(trunk_in)  # (B * n_obs, trunk_channels, trunk_height, trunk_width)
+        conv_out = self.conv(trunk_out)  # (B * n_obs, conv_channels, trunk_height, trunk_width)
+        ssm_out = self.spatial_softmax(conv_out)  # (B * n_obs, conv_channels * 2)
+        if self.like_lerobot:
+            ssm_out = self.lerobot_extra(ssm_out)
+        return ssm_out.reshape(len(imgs), -1)  # (B, n_obs * conv_channels * 2)
+
+
+
+class DiffusionPolicy(Module):
+    def __init__(self, chunk_len: int, like_lerobot: bool = True):
+        super().__init__()
+        self.chunk_len = chunk_len
+        self.imgs_encoder = ImgsEncoder(like_lerobot=like_lerobot)
         self.denoiser = Denoiser()
 
     def forward(
@@ -114,14 +127,8 @@ class DiffusionPolicy(Module):
         step: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
-        img_encoding = (
-            self.img_encoder(
-                imgs.flatten(start_dim=0, end_dim=1)  # (B * n_obs, n_channels, height, width)
-            )  # TODO
-            .flatten(start_dim=1)
-            .unflatten(dim=0, sizes=imgs.shape[:2])
-        )
-        eps_hat = self.denoiser(img_encoding, proprio, step, chunk)
+        imgs_encoding = self.imgs_encoder(imgs)
+        eps_hat = self.denoiser(imgs_encoding, proprio, step, chunk)
         return eps_hat
 
     @torch.no_grad()
@@ -134,10 +141,10 @@ class DiffusionPolicy(Module):
         chunk = torch.randn(
             proprio.size(0), self.chunk_len, proprio.size(-1), device=imgs.device
         )
-        img_encoding = self.img_encoder(imgs).flatten()
+        imgs_encoding = self.imgs_encoder(imgs)
         if method == "ddpm":
             for step in reversed(range(1000)):  # TODO: Don't hardcode step count
-                eps_hat = self.denoiser(img_encoding, proprio, torch.Tensor([step]), chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprio, torch.tensor([step]), chunk)
                 chunk = TODO
         elif method == "ddim":
             raise NotImplementedError
