@@ -1,5 +1,14 @@
 # Log
 
+## 2 September 2026
+
+- Read the Diffusion Policy paper, finding another discrepancy between paper and reference implementation (Eq. 3 adds noise without downscaling the signal; the code uses the standard blend)
+- Generated 100 SO-100 reach episodes and trained reference ACT on them; dataset and checkpoints on Hugging Face
+- Started reimplementing DP-CNN in plain PyTorch: obs encoder (ResNet-18 with GroupNorm, spatial softmax) and FiLM conditioning done, UNet and sampler next
+- Learned: chunk length must be divisible by 4, the reference UNet only uses 2 of its 3 skip connections, 100 denoising steps are enough for actions (image diffusion uses 1000)
+- Wrote up the VAE view of ACT, DDPM and DDIM (ELBO gap, small steps, why DDIM can skip), fact-checked against the original papers
+- [Posted update on X](https://x.com/ja_rothschild/status/2095399148078141573) with the discrepancy and the writeup
+
 ## 1 September 2026
 
 - Finished the MIT flow matching and diffusion course (6.S184)
