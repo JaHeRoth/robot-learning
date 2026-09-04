@@ -33,11 +33,11 @@ class UNet(Module):
 class Denoiser(Module):
     def __init__(self, chain_len: int, dim_k_encoding: int = 128):
         super().__init__()
-        step_embedder = Embedding.from_pretrained(
+        k_embedder = Embedding.from_pretrained(
             _make_sequence_pos_embedding(length=chain_len, dim=dim_k_encoding)
         )
-        self.step_encoder = Sequential(
-            step_embedder, Linear(dim_k_encoding, 512), Mish(), Linear(512, dim_k_encoding)
+        self.k_encoder = Sequential(
+            k_embedder, Linear(dim_k_encoding, 512), Mish(), Linear(512, dim_k_encoding)
         )
         self.unet = UNet()
     
@@ -45,12 +45,12 @@ class Denoiser(Module):
         self,
         img_encoding: Tensor,  # (B, n_obs * n_resnet18_out_channels)
         proprio: Tensor,  # (B, n_obs, dof)
-        step: Tensor,  # (B,)
+        k: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
-        step_encoding = self.step_encoder(step)
+        k_encoding = self.k_encoder(k)
         conditioner = torch.cat(
-            [img_encoding, proprio.flatten(start_dim=1), step_encoding],
+            [img_encoding, proprio.flatten(start_dim=1), k_encoding],
             dim=-1,
         )
         eps_hat = self.unet(conditioner, chunk)
@@ -125,11 +125,11 @@ class DiffusionPolicy(Module):
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
         proprio: Tensor,  # (B, n_obs, dof)
-        step: Tensor,  # (B,)
+        k: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         imgs_encoding = self.imgs_encoder(imgs)
-        eps_hat = self.denoiser(imgs_encoding, proprio, step, chunk)
+        eps_hat = self.denoiser(imgs_encoding, proprio, k, chunk)
         return eps_hat
 
     @torch.no_grad()
@@ -160,17 +160,17 @@ class DiffusionPolicy(Module):
             beta_tilde = (1 - alpha_bar_target[:1]) / (1 - alpha_bar_target[1:]) * beta
             z = torch.rand(self.chain_len, *chunk.size())  # (chain_len, B, chunk_len, dof)
             for k in reversed(range(self.chain_len)):
-                step_tensor = torch.full(
+                k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
                 chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde.sqrt() * z[k]
         else:
-            step_size = 10
-            for step in reversed(range(0, self.chain_len, step_size)):
-                step_tensor = torch.full(
-                    size=(len(imgs),), fill_value=step, dtype=torch.long, device=imgs.device
+            k_size = 10
+            for k in reversed(range(0, self.chain_len, k_size)):
+                k_tensor = torch.full(
+                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
-                chunk = (alpha_bar[step - step_size])
+                eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
+                chunk = (alpha_bar[k - k_size])
         return chunk
