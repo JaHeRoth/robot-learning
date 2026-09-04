@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity
+from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity, LazyLinear
 from torchvision.models import resnet18
 from torch.nn import functional as F
 
@@ -30,7 +30,7 @@ class ResBlock(Module):
         )
         self.film = Sequential(
             Mish(),
-            Linear(268, out_channels * 2),  # TODO: Don't hardcode in-dim?
+            LazyLinear(out_features=out_channels * 2),
         )
         self.conv_block2 = Sequential(
             Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=5, padding=2),
