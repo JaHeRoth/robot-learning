@@ -22,52 +22,79 @@ class ResBlock(Module):
         self.conv = TODO
 
 
+class ConditionedSequential(Module):
+    def __init__(self, *layers):
+        super().__init__()
+        self.layers = ModuleList(layers)
+
+    def forward(self, x: Tensor, conditioner: Tensor) -> Tensor:
+        for layer in self.layers:
+            if isinstance(layer, ResBlock):
+                x = layer(x, conditioner)
+            else:
+                x = layer(x)
+        return x
+
+
 class UNet(Module):
     def __init__(self):
         super().__init__()
-        self.down1 = ModuleList([
+        self.down1 = ConditionedSequential(
             ResBlock(in_channels=6, out_channels=512),
             ResBlock(in_channels=512, out_channels=512),
             Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=1),
-        ])
-        self.down2 = ModuleList([
+        )
+        self.down2_blocks = ConditionedSequential(
             ResBlock(in_channels=512, out_channels=1024),
             ResBlock(in_channels=1024, out_channels=1024),
-            Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=2, padding=1),
-        ])
-        self.down3 = ModuleList([
+        )
+        self.down2_down = Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=2, padding=1)
+        self.down3 = ConditionedSequential(
             ResBlock(in_channels=1024, out_channels=2048),
             ResBlock(in_channels=2048, out_channels=2048),
-        ])
-        self.mid = ModuleList([
+        )
+        self.mid = ConditionedSequential(
             ResBlock(in_channels=2048, out_channels=2048),
             ResBlock(in_channels=2048, out_channels=2048),
-        ])
-        self.up1 = ModuleList([
+        )
+        self.up1 = ConditionedSequential(
             ResBlock(in_channels=4096, out_channels=1024),
             ResBlock(in_channels=1024, out_channels=1024),
             ConvTranspose1d(in_channels=1024, out_channels=1024, kernel_size=4, stride=2, padding=1),
-        ])
-        self.up2 = ModuleList([
+        )
+        self.up2 = ConditionedSequential(
             ResBlock(in_channels=2048, out_channels=512),
             ResBlock(in_channels=512, out_channels=512),
             ConvTranspose1d(in_channels=512, out_channels=512, kernel_size=4, stride=2, padding=1),
-        ])
-        self.head = Sequential(
+        )
+        self.head = ConditionedSequential(
             Conv1d(in_channels=512, out_channels=512, kernel_size=5, padding=2),
             GroupNorm(num_groups=8, num_channels=512),
             Mish(),
             Conv1d(in_channels=512, out_channels=6, kernel_size=1),
-            # TODO: Transpose between dims 1 and 2
         )
 
     def forward(
         self,
         conditioner: Tensor,  # (B, n_obs * (n_resnet18_out_channels + dof) + dim_k_encoding)
         chunk: Tensor,  # (B, chunk_len, dof)
-    ):
+    ) -> Tensor:
         assert chunk.size(1) % 4 == 0, "Chunk length must be multiple of 4"
-        chunk_img = chunk.permute(0, 2, 1)
+        x = chunk.permute(0, 2, 1)
+        x = self.down1(x, conditioner)
+        x = self.down2_blocks(x, conditioner)
+        skip2 = x
+        x = self.down2_down(x)
+        x = self.down3(x, conditioner)
+        skip3 = x
+        x = self.mid(x, conditioner)
+        x = torch.cat([x, skip3], dim=1)
+        x = self.up1(x, conditioner)
+        x = torch.cat([x, skip2], dim=1)
+        x = self.up2(x, conditioner)
+        x = self.head(x, conditioner)
+        x = x.permute(0, 2, 1)
+        return x
 
 
 class Denoiser(Module):
