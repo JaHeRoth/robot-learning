@@ -1,1 +1,3 @@
 During denoising, both DDPM and DDIM strive for the marginal distribution of each visited xⱼ to match the one seen during training (p(xⱼ) ≈ q(xⱼ)). DDPM achieves this by ensuring p(xⱼ|xⱼ₊₁) ≈ q(xⱼ|xⱼ₊₁) at every rung along the way, thus that p(x₀, ..., xₙ) ≈ q(x₀, ..., xₙ), since that's a sufficient condition for p(xⱼ) ≈ q(xⱼ). However, p(x₀, ..., xₙ) ≈ q(x₀, ..., xₙ) is not a necessary condition for p(xⱼ) ≈ q(xⱼ), and so DDIM finds an update rule that achieves p(xⱼ) ≈ q(xⱼ) without achieving the harder p(x₀, ..., xₙ) ≈ q(x₀, ..., xₙ).
+
+The one hard requirement is that each xⱼ the sampler visits must be in-distribution for that rung's training inputs, since the network's estimates only mean anything on inputs like the ones it trained on.
