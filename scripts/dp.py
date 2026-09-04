@@ -30,6 +30,7 @@ class ResBlock(Module):
         )
         self.film = Sequential(
             Mish(),
+            # in_features = n_obs * (n_keypoints + proprio_dim) + k_dim
             LazyLinear(out_features=out_channels * 2),
         )
         self.conv_block2 = Sequential(
