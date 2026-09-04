@@ -166,11 +166,17 @@ class DiffusionPolicy(Module):
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
                 chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde.sqrt() * z[k]
         else:
-            k_size = 10
-            for k in reversed(range(0, self.chain_len, k_size)):
+            k_step = 10
+            for k in reversed(range(0, self.chain_len, k_step)):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
-                chunk = (alpha_bar[k - k_size])
+                chunk = (
+                    (alpha_bar[k - k_step] / alpha_bar[k]).sqrt() * chunk
+                    + (
+                        (1 - alpha_bar[k - k_step]).sqrt()
+                        - (alpha_bar[k - k_step] * (1 - alpha_bar[k]) / alpha_bar[k]).sqrt()
+                    ) * eps_hat
+                )
         return chunk
