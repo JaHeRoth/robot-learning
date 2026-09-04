@@ -143,16 +143,20 @@ class DiffusionPolicy(Module):
             proprio.size(0), self.chunk_len, proprio.size(-1), device=imgs.device
         )
         imgs_encoding = self.imgs_encoder(imgs)
+        f = torch.cos(  # Cubed cos gives constant angular velocity along quarter-circle from x_K to x_0
+            (
+                torch.arange(self.chain_len + 1, dtype=torch.float32, device=imgs.device) / self.chain_len + 0.008
+            ) / 1.008 * torch.pi / 2
+        ) ** 2
+        alpha_bar_target = f / f[0]
+        beta = (
+            1 - alpha_bar_target[1:] / alpha_bar_target[:1]
+        ).clip(max=0.999)  # Clip to avoid degeneracy at edge
+        # From here, all formulas follow from definition of q(x_k|x_{k-1}), that q(x_{k-1}|x_k,x_0)
+        #  is Gaussian, and that q(x_{k-1}|x_k) is near-Gaussian for small beta_k.
+        alpha = 1 - beta
+        alpha_bar = alpha.cumprod()  # Would have equaled alpha_bar_target if beta wasn't clipped
         if original:
-            f = torch.cos(
-                (
-                    torch.arange(self.chain_len + 1, dtype=torch.float32, device=imgs.device) / self.chain_len + 0.008
-                ) / 1.008 * torch.pi / 2
-            ) ** 2
-            alpha_bar_target = f / f[0]
-            beta = (1 - alpha_bar_target[1:] / alpha_bar_target[:1]).clip(max=0.999)
-            alpha = 1 - beta
-            alpha_bar = alpha.cumprod()
             beta_tilde = (1 - alpha_bar_target[:1]) / (1 - alpha_bar_target[1:]) * beta
             z = torch.rand(self.chain_len, *chunk.size())  # (chain_len, B, chunk_len, dof)
             for k in reversed(range(self.chain_len)):
@@ -162,10 +166,11 @@ class DiffusionPolicy(Module):
                 eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
                 chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde.sqrt() * z[k]
         else:
-            for step in reversed(range(self.chain_len // 10)):
+            step_size = 10
+            for step in reversed(range(0, self.chain_len, step_size)):
                 step_tensor = torch.full(
                     size=(len(imgs),), fill_value=step, dtype=torch.long, device=imgs.device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, step_tensor, chunk)
-                chunk = TODO
+                chunk = (alpha_bar[step - step_size])
         return chunk
