@@ -2,6 +2,7 @@ import torch
 from torch import Tensor
 from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU
 from torchvision.models import resnet18
+from torch.nn import functional as F
 
 
 def _make_sequence_pos_embedding(length: int, dim: int):
@@ -31,10 +32,10 @@ class UNet(Module):
 
 
 class Denoiser(Module):
-    def __init__(self, chain_len: int, dim_k_encoding: int = 128):
+    def __init__(self, max_k: int, dim_k_encoding: int = 128):
         super().__init__()
         k_embedder = Embedding.from_pretrained(
-            _make_sequence_pos_embedding(length=chain_len, dim=dim_k_encoding)
+            _make_sequence_pos_embedding(length=max_k + 1, dim=dim_k_encoding)
         )
         self.k_encoder = Sequential(
             k_embedder, Linear(dim_k_encoding, 512), Mish(), Linear(512, dim_k_encoding)
@@ -114,12 +115,12 @@ class ImgsEncoder(Module):
 
 
 class DiffusionPolicy(Module):
-    def __init__(self, chain_len: int, chunk_len: int, like_lerobot: bool = True):
+    def __init__(self, max_k: int, chunk_len: int, like_lerobot: bool = True):
         super().__init__()
-        self.chain_len = chain_len
+        self.max_k = max_k
         self.chunk_len = chunk_len
         self.imgs_encoder = ImgsEncoder(like_lerobot=like_lerobot)
-        self.denoiser = Denoiser(chain_len=chain_len)
+        self.denoiser = Denoiser(max_k=max_k)
 
     def forward(
         self,
@@ -139,44 +140,52 @@ class DiffusionPolicy(Module):
         proprio: Tensor,  # (B, n_obs, dof)
         original: bool = False  # DDPM if true, DDIM if false
     ) -> Tensor:
+        device = imgs.device
         chunk = torch.randn(
-            proprio.size(0), self.chunk_len, proprio.size(-1), device=imgs.device
+            proprio.size(0), self.chunk_len, proprio.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        f = torch.cos(  # Cubed cos gives constant angular velocity along quarter-circle from x_K to x_0
+        f = torch.cos(  # Squared cos gives constant angular velocity along quarter-circle from x_K to x_0
             (
-                torch.arange(self.chain_len + 1, dtype=torch.float32, device=imgs.device) / self.chain_len + 0.008
+                torch.arange(self.max_k + 1, dtype=torch.float32, device=device) / self.max_k + 0.008
             ) / 1.008 * torch.pi / 2
         ) ** 2
         alpha_bar_target = f / f[0]
         beta = (
-            1 - alpha_bar_target[1:] / alpha_bar_target[:1]
+            1 - alpha_bar_target / _prev(alpha_bar_target)
         ).clip(max=0.999)  # Clip to avoid degeneracy at edge
         # From here, all formulas follow from definition of q(x_k|x_{k-1}), that q(x_{k-1}|x_k,x_0)
         #  is Gaussian, and that q(x_{k-1}|x_k) is near-Gaussian for small beta_k.
         alpha = 1 - beta
-        alpha_bar = alpha.cumprod()  # Would have equaled alpha_bar_target if beta wasn't clipped
+        alpha_bar = alpha.cumprod(dim=0)  # Would have equaled alpha_bar_target if beta wasn't clipped
         if original:
-            beta_tilde = (1 - alpha_bar_target[:1]) / (1 - alpha_bar_target[1:]) * beta
-            z = torch.rand(self.chain_len, *chunk.size())  # (chain_len, B, chunk_len, dof)
-            for k in reversed(range(self.chain_len)):
+            beta_tilde = (1 - _prev(alpha_bar)) / (1 - alpha_bar) * beta
+            beta_tilde[0] = 0.0  # Was 0/0, thus NaN, but is the lim of something going to 0
+            z = torch.randn(self.max_k + 1, *chunk.size(), device=device)  # (max_k + 1, B, chunk_len, dof)
+            for k in reversed(range(1, self.max_k + 1)):
                 k_tensor = torch.full(
-                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
+                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
-                chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde.sqrt() * z[k]
+                chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde[k].sqrt() * z[k]
         else:
             k_step = 10
-            for k in reversed(range(0, self.chain_len, k_step)):
+            for k in reversed(range(1, self.max_k + 1, k_step)):
                 k_tensor = torch.full(
-                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=imgs.device
+                    size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
+                target_k = max(0, k - k_step)
                 chunk = (
-                    (alpha_bar[k - k_step] / alpha_bar[k]).sqrt() * chunk
+                    (alpha_bar[target_k] / alpha_bar[k]).sqrt() * chunk
                     + (
-                        (1 - alpha_bar[k - k_step]).sqrt()
-                        - (alpha_bar[k - k_step] * (1 - alpha_bar[k]) / alpha_bar[k]).sqrt()
+                        (1 - alpha_bar[target_k]).sqrt()
+                        - (alpha_bar[target_k] * (1 - alpha_bar[k]) / alpha_bar[k]).sqrt()
                     ) * eps_hat
                 )
         return chunk
+
+
+def _prev(x: Tensor, fill_val: float = 1.0) -> Tensor:
+    """out[i] := x[i - 1] if i > 0 else fill_val"""
+    return F.pad(x[:-1], (1, 0), value=fill_val)
