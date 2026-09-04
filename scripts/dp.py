@@ -122,6 +122,27 @@ class DiffusionPolicy(Module):
         self.imgs_encoder = ImgsEncoder(like_lerobot=like_lerobot)
         self.denoiser = Denoiser(max_k=max_k)
 
+        f = torch.cos(  # Squared cos gives constant angular velocity along quarter-circle from x_K to x_0
+            (
+                torch.arange(self.max_k + 1, dtype=torch.float32) / self.max_k + 0.008
+            ) / 1.008 * torch.pi / 2
+        ) ** 2
+        alpha_bar_target = f / f[0]
+        beta = (
+            1 - alpha_bar_target / _prev(alpha_bar_target)
+        ).clip(max=0.999)  # Clip to avoid degeneracy at edge
+        # From here, all formulas follow from definition of q(x_k|x_{k-1}), that q(x_{k-1}|x_k,x_0)
+        #  is Gaussian, and that q(x_{k-1}|x_k) is near-Gaussian for small beta_k.
+        alpha = 1 - beta
+        alpha_bar = alpha.cumprod(dim=0)  # Would have equaled alpha_bar_target if beta wasn't clipped
+        beta_tilde = (1 - _prev(alpha_bar)) / (1 - alpha_bar) * beta
+        beta_tilde[0] = 0.0  # Was 0/0, thus NaN, but is the lim of something going to 0
+        # Buffers (unlike plain attributes) follow .to(device) and enter state_dict
+        self.register_buffer("beta", beta)
+        self.register_buffer("alpha", alpha)
+        self.register_buffer("alpha_bar", alpha_bar)
+        self.register_buffer("beta_tilde", beta_tilde)
+
     def forward(
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
@@ -145,29 +166,14 @@ class DiffusionPolicy(Module):
             proprio.size(0), self.chunk_len, proprio.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        f = torch.cos(  # Squared cos gives constant angular velocity along quarter-circle from x_K to x_0
-            (
-                torch.arange(self.max_k + 1, dtype=torch.float32, device=device) / self.max_k + 0.008
-            ) / 1.008 * torch.pi / 2
-        ) ** 2
-        alpha_bar_target = f / f[0]
-        beta = (
-            1 - alpha_bar_target / _prev(alpha_bar_target)
-        ).clip(max=0.999)  # Clip to avoid degeneracy at edge
-        # From here, all formulas follow from definition of q(x_k|x_{k-1}), that q(x_{k-1}|x_k,x_0)
-        #  is Gaussian, and that q(x_{k-1}|x_k) is near-Gaussian for small beta_k.
-        alpha = 1 - beta
-        alpha_bar = alpha.cumprod(dim=0)  # Would have equaled alpha_bar_target if beta wasn't clipped
         if original:
-            beta_tilde = (1 - _prev(alpha_bar)) / (1 - alpha_bar) * beta
-            beta_tilde[0] = 0.0  # Was 0/0, thus NaN, but is the lim of something going to 0
             z = torch.randn(self.max_k + 1, *chunk.size(), device=device)  # (max_k + 1, B, chunk_len, dof)
             for k in reversed(range(1, self.max_k + 1)):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
-                chunk = (1 / alpha[k].sqrt()) * (chunk - beta[k] / (1 - alpha_bar[k]).sqrt() * eps_hat) + beta_tilde[k].sqrt() * z[k]
+                chunk = (1 / self.alpha[k].sqrt()) * (chunk - self.beta[k] / (1 - self.alpha_bar[k]).sqrt() * eps_hat) + self.beta_tilde[k].sqrt() * z[k]
         else:
             k_step = 10
             for k in reversed(range(1, self.max_k + 1, k_step)):
@@ -177,10 +183,10 @@ class DiffusionPolicy(Module):
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
                 target_k = max(0, k - k_step)
                 chunk = (
-                    (alpha_bar[target_k] / alpha_bar[k]).sqrt() * chunk
+                    (self.alpha_bar[target_k] / self.alpha_bar[k]).sqrt() * chunk
                     + (
-                        (1 - alpha_bar[target_k]).sqrt()
-                        - (alpha_bar[target_k] * (1 - alpha_bar[k]) / alpha_bar[k]).sqrt()
+                        (1 - self.alpha_bar[target_k]).sqrt()
+                        - (self.alpha_bar[target_k] * (1 - self.alpha_bar[k]) / self.alpha_bar[k]).sqrt()
                     ) * eps_hat
                 )
         return chunk
