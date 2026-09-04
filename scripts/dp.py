@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d
+from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity
 from torchvision.models import resnet18
 from torch.nn import functional as F
 
@@ -19,7 +19,34 @@ def _make_sequence_pos_embedding(length: int, dim: int):
 class ResBlock(Module):
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
-        self.conv = TODO
+        self.skip_connection = (
+            Identity() if out_channels == in_channels
+            else Conv1d(in_channels, out_channels, kernel_size=1)
+        )
+        self.conv_block1 = Sequential(
+            Conv1d(in_channels, out_channels, kernel_size=5, padding=2),
+            GroupNorm(num_groups=8, num_channels=out_channels),
+            Mish(),
+        )
+        self.film = Sequential(
+            Mish(),
+            Linear(268, out_channels * 2),  # TODO: Don't hardcode in-dim?
+        )
+        self.conv_block2 = Sequential(
+            Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=5, padding=2),
+            GroupNorm(num_groups=8, num_channels=out_channels),
+            Mish(),
+        )
+
+    def forward(self, x: Tensor, conditioner: Tensor):
+        residual = self.skip_connection(x)
+        x = self.conv_block1(x)
+        gamma, beta = self.film(conditioner).unsqueeze(2).chunk(2, dim=1)
+        x = gamma * x + beta
+        x = self.conv_block2(x)
+        x = x + residual
+        return x
+
 
 
 class ConditionedSequential(Module):
@@ -179,6 +206,11 @@ class ImgsEncoder(Module):
         return ssm_out.reshape(len(imgs), -1)  # (B, n_obs * conv_channels * 2)
 
 
+def _prev(x: Tensor, fill_val: float = 1.0) -> Tensor:
+    """out[i] := x[i - 1] if i > 0 else fill_val"""
+    return F.pad(x[:-1], (1, 0), value=fill_val)
+
+
 
 class DiffusionPolicy(Module):
     def __init__(self, max_k: int, chunk_len: int, like_lerobot: bool = True):
@@ -256,8 +288,3 @@ class DiffusionPolicy(Module):
                     ) * eps_hat
                 )
         return chunk
-
-
-def _prev(x: Tensor, fill_val: float = 1.0) -> Tensor:
-    """out[i] := x[i - 1] if i > 0 else fill_val"""
-    return F.pad(x[:-1], (1, 0), value=fill_val)
