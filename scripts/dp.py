@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU
+from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d
 from torchvision.models import resnet18
 from torch.nn import functional as F
 
@@ -17,17 +17,56 @@ def _make_sequence_pos_embedding(length: int, dim: int):
 
 
 class ResBlock(Module):
-    def __init__(self):
+    def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
-        self.conv = Conv1d(in_channels=50, out_channels)
+        self.conv = TODO
 
 
 class UNet(Module):
+    def __init__(self):
+        super().__init__()
+        self.down1 = ModuleList([
+            ResBlock(in_channels=6, out_channels=512),
+            ResBlock(in_channels=512, out_channels=512),
+            Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=1),
+        ])
+        self.down2 = ModuleList([
+            ResBlock(in_channels=512, out_channels=1024),
+            ResBlock(in_channels=1024, out_channels=1024),
+            Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=2, padding=1),
+        ])
+        self.down3 = ModuleList([
+            ResBlock(in_channels=1024, out_channels=2048),
+            ResBlock(in_channels=2048, out_channels=2048),
+        ])
+        self.mid = ModuleList([
+            ResBlock(in_channels=2048, out_channels=2048),
+            ResBlock(in_channels=2048, out_channels=2048),
+        ])
+        self.up1 = ModuleList([
+            ResBlock(in_channels=4096, out_channels=1024),
+            ResBlock(in_channels=1024, out_channels=1024),
+            ConvTranspose1d(in_channels=1024, out_channels=1024, kernel_size=4, stride=2, padding=1),
+        ])
+        self.up2 = ModuleList([
+            ResBlock(in_channels=2048, out_channels=512),
+            ResBlock(in_channels=512, out_channels=512),
+            ConvTranspose1d(in_channels=512, out_channels=512, kernel_size=4, stride=2, padding=1),
+        ])
+        self.head = Sequential(
+            Conv1d(in_channels=512, out_channels=512, kernel_size=5, padding=2),
+            GroupNorm(num_groups=8, num_channels=512),
+            Mish(),
+            Conv1d(in_channels=512, out_channels=6, kernel_size=1),
+            # TODO: Transpose between dims 1 and 2
+        )
+
     def forward(
         self,
         conditioner: Tensor,  # (B, n_obs * (n_resnet18_out_channels + dof) + dim_k_encoding)
         chunk: Tensor,  # (B, chunk_len, dof)
     ):
+        assert chunk.size(1) % 4 == 0, "Chunk length must be multiple of 4"
         chunk_img = chunk.permute(0, 2, 1)
 
 
