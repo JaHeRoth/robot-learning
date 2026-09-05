@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import Tensor
-from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity
+from torch.nn import Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity
 from torchvision.models import resnet18
 from torch.nn import functional as F
 
@@ -144,11 +144,11 @@ class UNet(Module):
 class Denoiser(Module):
     def __init__(self, config: DPConfig):
         super().__init__()
-        k_embedder = Embedding.from_pretrained(
-            _make_sequence_pos_embedding(length=config.max_k + 1, dim=config.dim_k_encoding)
+        self.register_buffer(
+            "k_table",
+            _make_sequence_pos_embedding(length=config.max_k + 1, dim=config.dim_k_encoding),
         )
         self.k_encoder = Sequential(
-            k_embedder,
             Linear(config.dim_k_encoding, 512),
             Mish(),
             Linear(512, config.dim_k_encoding),
@@ -164,7 +164,7 @@ class Denoiser(Module):
         k: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
-        k_encoding = self.k_encoder(k)
+        k_encoding = self.k_encoder(self.k_table[k])
         conditioner = torch.cat(
             [img_encoding, proprio.flatten(start_dim=1), k_encoding],
             dim=-1,
