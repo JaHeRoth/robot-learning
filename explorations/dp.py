@@ -69,7 +69,7 @@ ds = LeRobotDataset(
         "observation.image": [-1 / fps, 0],
         "observation.state": [-1 / fps, 0],
         "action": [i / fps for i in range(chunk_len)],
-    }
+    },
 )
 torch.manual_seed(0)
 B = 8
