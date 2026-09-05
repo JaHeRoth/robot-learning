@@ -1,5 +1,6 @@
 context/
 outputs/
+.DS_Store
 .vscode/*
 !.vscode/settings.json
 
