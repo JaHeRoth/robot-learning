@@ -1,6 +1,10 @@
 # %%
 import torch
-from scripts.dp import DiffusionPolicy
+from scripts.dp import DiffusionPolicy, DPConfig
+
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d
+from lerobot.configs.types import FeatureType, PolicyFeature
 
 # %%
 batch_size = 4
@@ -14,7 +18,19 @@ proprio = torch.randn(batch_size, n_obs, proprio_dim)
 k = torch.randint(low=1, high=max_k + 1, size=(batch_size,))
 chunk = torch.randn(batch_size, chunk_len, proprio_dim)
 
-dp = DiffusionPolicy(max_k=max_k, chunk_len=chunk_len)
+dp_config = DPConfig(max_k=max_k, chunk_len=chunk_len)
+dp = DiffusionPolicy(dp_config)
+
+# %%
+# Checksum test
+reference_denoiser = DiffusionConditionalUnet1d(
+    DiffusionConfig(
+        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(6,))}
+    ),
+    global_cond_dim=dp_config.n_obs * (dp_config.latent_img_depth + dp_config.proprio_dim),
+)
+print(f"LeRobot's param count: {sum(p.numel() for p in reference_denoiser.parameters())}")
+print(f"Our param count: {sum(p.numel() for p in dp.denoiser.parameters())}")
 
 # %%
 # # Smoke tests
@@ -28,13 +44,8 @@ ddim_chunk = dp.sample(imgs, proprio, original=False)
 assert ddim_chunk.shape == chunk.shape, "Wrong output dimension"
 
 # %%
-# Checksum test
-print(f"LeRobot's param count: {TODO}")
-print(f"Our param count: {sum(p.numel() for p in dp.parameters())}")
-
-# %%
 # Gradient flow test
-dp = DiffusionPolicy(max_k=max_k, chunk_len=chunk_len)
+dp = DiffusionPolicy(DPConfig(max_k=max_k, chunk_len=chunk_len))
 eps_hat = dp(imgs, proprio, k, chunk)
 dp.zero_grad()
 loss = eps_hat.abs().mean()
