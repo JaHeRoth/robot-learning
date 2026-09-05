@@ -1,8 +1,25 @@
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
-from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity, LazyLinear
+from torch.nn import Embedding, Mish, Module, Linear, Sequential, Conv1d, Conv2d, Softmax, GroupNorm, ReLU, ModuleList, ConvTranspose1d, Identity
 from torchvision.models import resnet18
 from torch.nn import functional as F
+
+
+@dataclass(frozen=True)
+class DPConfig:
+    max_k: int = 100
+    chunk_len: int = 48
+    n_obs: int = 2
+    n_keypoints: int = 32
+    proprio_dim: int = 6
+    dim_k_encoding: int = 128
+    like_lerobot: bool = True
+
+    @property
+    def latent_img_depth(self) -> int:
+        return 2 * self.n_keypoints  # Two coordinates per keypoint
 
 
 def _make_sequence_pos_embedding(length: int, dim: int):
@@ -17,7 +34,7 @@ def _make_sequence_pos_embedding(length: int, dim: int):
 
 
 class ResBlock(Module):
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, cond_dim: int):
         super().__init__()
         self.skip_connection = (
             Identity() if out_channels == in_channels
@@ -30,8 +47,7 @@ class ResBlock(Module):
         )
         self.film = Sequential(
             Mish(),
-            # in_features = n_obs * (n_keypoints + proprio_dim) + k_dim
-            LazyLinear(out_features=out_channels * 2),
+            Linear(in_features=cond_dim, out_features=out_channels * 2),
         )
         self.conv_block2 = Sequential(
             Conv1d(in_channels=out_channels, out_channels=out_channels, kernel_size=5, padding=2),
@@ -65,41 +81,41 @@ class ConditionedSequential(Module):
 
 
 class UNet(Module):
-    def __init__(self):
+    def __init__(self, config: DPConfig, cond_dim: int):
         super().__init__()
         self.down1 = ConditionedSequential(
-            ResBlock(in_channels=6, out_channels=512),
-            ResBlock(in_channels=512, out_channels=512),
+            ResBlock(cond_dim=cond_dim, in_channels=config.proprio_dim, out_channels=512),
+            ResBlock(cond_dim=cond_dim, in_channels=512, out_channels=512),
             Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=1),
         )
         self.down2_blocks = ConditionedSequential(
-            ResBlock(in_channels=512, out_channels=1024),
-            ResBlock(in_channels=1024, out_channels=1024),
+            ResBlock(cond_dim=cond_dim, in_channels=512, out_channels=1024),
+            ResBlock(cond_dim=cond_dim, in_channels=1024, out_channels=1024),
         )
         self.down2_down = Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=2, padding=1)
         self.down3 = ConditionedSequential(
-            ResBlock(in_channels=1024, out_channels=2048),
-            ResBlock(in_channels=2048, out_channels=2048),
+            ResBlock(cond_dim=cond_dim, in_channels=1024, out_channels=2048),
+            ResBlock(cond_dim=cond_dim, in_channels=2048, out_channels=2048),
         )
         self.mid = ConditionedSequential(
-            ResBlock(in_channels=2048, out_channels=2048),
-            ResBlock(in_channels=2048, out_channels=2048),
+            ResBlock(cond_dim=cond_dim, in_channels=2048, out_channels=2048),
+            ResBlock(cond_dim=cond_dim, in_channels=2048, out_channels=2048),
         )
         self.up1 = ConditionedSequential(
-            ResBlock(in_channels=4096, out_channels=1024),
-            ResBlock(in_channels=1024, out_channels=1024),
+            ResBlock(cond_dim=cond_dim, in_channels=4096, out_channels=1024),
+            ResBlock(cond_dim=cond_dim, in_channels=1024, out_channels=1024),
             ConvTranspose1d(in_channels=1024, out_channels=1024, kernel_size=4, stride=2, padding=1),
         )
         self.up2 = ConditionedSequential(
-            ResBlock(in_channels=2048, out_channels=512),
-            ResBlock(in_channels=512, out_channels=512),
+            ResBlock(cond_dim=cond_dim, in_channels=2048, out_channels=512),
+            ResBlock(cond_dim=cond_dim, in_channels=512, out_channels=512),
             ConvTranspose1d(in_channels=512, out_channels=512, kernel_size=4, stride=2, padding=1),
         )
         self.head = ConditionedSequential(
             Conv1d(in_channels=512, out_channels=512, kernel_size=5, padding=2),
             GroupNorm(num_groups=8, num_channels=512),
             Mish(),
-            Conv1d(in_channels=512, out_channels=6, kernel_size=1),
+            Conv1d(in_channels=512, out_channels=config.proprio_dim, kernel_size=1),
         )
 
     def forward(
@@ -126,15 +142,20 @@ class UNet(Module):
 
 
 class Denoiser(Module):
-    def __init__(self, max_k: int, dim_k_encoding: int = 128):
+    def __init__(self, config: DPConfig):
         super().__init__()
         k_embedder = Embedding.from_pretrained(
-            _make_sequence_pos_embedding(length=max_k + 1, dim=dim_k_encoding)
+            _make_sequence_pos_embedding(length=config.max_k + 1, dim=config.dim_k_encoding)
         )
         self.k_encoder = Sequential(
-            k_embedder, Linear(dim_k_encoding, 512), Mish(), Linear(512, dim_k_encoding)
+            k_embedder,
+            Linear(config.dim_k_encoding, 512),
+            Mish(),
+            Linear(512, config.dim_k_encoding),
         )
-        self.unet = UNet()
+        # Width of the concat in forward below: per-obs image features and proprio, plus the k encoding
+        cond_dim = config.n_obs * (config.latent_img_depth + config.proprio_dim) + config.dim_k_encoding
+        self.unet = UNet(config, cond_dim=cond_dim)
     
     def forward(
         self,
@@ -172,9 +193,9 @@ class SpatialSoftmax(Module):
 
 
 class ImgsEncoder(Module):
-    def __init__(self, like_lerobot):
+    def __init__(self, config: DPConfig):
         super().__init__()
-        self.like_lerobot = like_lerobot
+        self.like_lerobot = config.like_lerobot
         self.trunk = Sequential(
             *list(
                 resnet18(
@@ -186,11 +207,11 @@ class ImgsEncoder(Module):
                 ).children()
             )[:-2]
         )
-        self.conv = Conv2d(in_channels=512, out_channels=32, kernel_size=1)
+        self.conv = Conv2d(in_channels=512, out_channels=config.n_keypoints, kernel_size=1)
         self.spatial_softmax = SpatialSoftmax()
-        if like_lerobot:
+        if config.like_lerobot:
             self.lerobot_extra = Sequential(
-                Linear(in_features=64, out_features=64),
+                Linear(in_features=config.latent_img_depth, out_features=config.latent_img_depth),
                 ReLU(),
             )
 
@@ -214,16 +235,15 @@ def _prev(x: Tensor, fill_val: float = 1.0) -> Tensor:
 
 
 class DiffusionPolicy(Module):
-    def __init__(self, max_k: int, chunk_len: int, like_lerobot: bool = True):
+    def __init__(self, config: DPConfig):
         super().__init__()
-        self.max_k = max_k
-        self.chunk_len = chunk_len
-        self.imgs_encoder = ImgsEncoder(like_lerobot=like_lerobot)
-        self.denoiser = Denoiser(max_k=max_k)
+        self.config = config
+        self.imgs_encoder = ImgsEncoder(config)
+        self.denoiser = Denoiser(config)
 
         f = torch.cos(  # Squared cos gives constant angular velocity along quarter-circle from x_K to x_0
             (
-                torch.arange(self.max_k + 1, dtype=torch.float32) / self.max_k + 0.008
+                torch.arange(self.config.max_k + 1, dtype=torch.float32) / self.config.max_k + 0.008
             ) / 1.008 * torch.pi / 2
         ) ** 2
         alpha_bar_target = f / f[0]
@@ -262,20 +282,23 @@ class DiffusionPolicy(Module):
     ) -> Tensor:
         device = imgs.device
         chunk = torch.randn(
-            proprio.size(0), self.chunk_len, proprio.size(-1), device=device
+            proprio.size(0), self.config.chunk_len, proprio.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
         if original:
-            z = torch.randn(self.max_k + 1, *chunk.size(), device=device)  # (max_k + 1, B, chunk_len, dof)
-            for k in reversed(range(1, self.max_k + 1)):
+            z = torch.randn(self.config.max_k + 1, *chunk.size(), device=device)  # (max_k + 1, B, chunk_len, dof)
+            for k in reversed(range(1, self.config.max_k + 1)):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
-                chunk = (1 / self.alpha[k].sqrt()) * (chunk - self.beta[k] / (1 - self.alpha_bar[k]).sqrt() * eps_hat) + self.beta_tilde[k].sqrt() * z[k]
+                chunk = (
+                    (1 / self.alpha[k].sqrt()) * (chunk - self.beta[k] / (1 - self.alpha_bar[k]).sqrt() * eps_hat)
+                    + self.beta_tilde[k].sqrt() * z[k]
+                )
         else:
             k_step = 10
-            for k in reversed(range(1, self.max_k + 1, k_step)):
+            for k in reversed(range(1, self.config.max_k + 1, k_step)):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
