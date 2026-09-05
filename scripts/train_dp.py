@@ -1,26 +1,26 @@
 from pathlib import Path
 
+import diffusers
 import torch
+from torch import Tensor
 # from scripts.my_rollout import my_rollout
-from scripts.act import ACT
 from torch.nn.utils import clip_grad_norm_
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from matplotlib import pyplot as plt
 import numpy as np
-import torch.nn.functional as F
-from tqdm import tqdm
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from torch.utils.data import DataLoader
-from torch.optim import AdamW
-from matplotlib import pyplot as plt
-import torch
+
 from scripts.dp import DiffusionPolicy, DPConfig
 
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d
-from lerobot.configs.types import FeatureType, PolicyFeature
+
+def _normalize(x: Tensor, stats: dict) -> Tensor:
+    return 2 * (x - stats["min"]) / (stats["max"] - stats["min"]) - 1
+
+
+def _denormalize(x: Tensor, stats: dict) -> Tensor:
+    return (x + 1) / 2 * (stats["max"] - stats["min"]) + stats["min"]
+
 
 def my_train(seed: int | None = None):
     if seed is not None:
@@ -35,7 +35,7 @@ def my_train(seed: int | None = None):
     weight_decay = 1e-6
     grad_clip_at = 10.0
     adam_betas = (0.95, 0.999)
-    adam_warmup = 50
+    adam_warmup = 500
 
     num_batches = 100_000
     log_every = 100
@@ -56,29 +56,26 @@ def my_train(seed: int | None = None):
     )
     loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    model = DiffusionPolicy(
-        DPConfig(
-            proprio_dim=ds.meta.features["action"]["shape"][0],
-            chunk_len=chunk_len,
-        )
-    ).cuda()
-    opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=adam_betas, n_warmup_steps=adam_warmup)
+    config = DPConfig(
+        proprio_dim=ds.meta.features["observation.state"]["shape"][0],
+        chunk_len=chunk_len,
+    )
+    model = DiffusionPolicy(config).cuda()
+    opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=adam_betas)
+    sched = diffusers.optimization.get_scheduler("cosine", opt, num_warmup_steps=adam_warmup, num_training_steps=num_batches)
 
     # env = make_env(make_env_config("pusht"), n_envs=n_envs)
     # horizon = env.call("_max_episode_steps")[0]
 
-    state_mean = torch.as_tensor(
-        ds.meta.stats["observation.state"]["mean"], dtype=torch.float32, device="cuda"
-    )
-    state_std = torch.as_tensor(
-        ds.meta.stats["observation.state"]["std"], dtype=torch.float32, device="cuda"
-    )
-    action_mean = torch.as_tensor(
-        ds.meta.stats["action"]["mean"], dtype=torch.float32, device="cuda"
-    )
-    action_std = torch.as_tensor(
-        ds.meta.stats["action"]["std"], dtype=torch.float32, device="cuda"
-    )
+    stats = {
+        obj: {
+            attr: torch.as_tensor(
+                ds.meta.stats[obj][attr], dtype=torch.float32, device="cuda"
+            )
+            for attr in ["min", "max", "mean", "std"]
+        }
+        for obj in ["action", "observation.state", "observation.image"]
+    }
 
     losses = []
     avg_losses = []
@@ -86,21 +83,26 @@ def my_train(seed: int | None = None):
     avg_sum_imputed_rewards = []
     success_rates = []
     step = 1
-    ema_sd = model.state_dict().deepcopy()
+    ema_sd = {
+        n: w.clone()
+        for n, w in model.state_dict().items()
+    }
     while step <= num_batches:
         for batch in loader:
             if step > num_batches:
                 break
             imgs = batch["observation.image"].cuda()
             proprio = batch["observation.state"].cuda()
-            proprio = (proprio - state_mean) / state_std
+            proprio = _normalize(proprio, stats=stats["observation.state"])
             chunk = batch["action"].cuda()
-            chunk = (chunk - action_mean) / action_std
+            chunk = _normalize(chunk, stats=stats["action"])
             is_padding = batch["action_is_pad"].cuda()
             loss_mask = ~is_padding.unsqueeze(-1)
 
             noise = torch.randn_like(chunk)
-            k = torch.randint(low=1, high=101, size=(B,), device="cuda")
+            k = torch.randint(
+                low=1, high=model.config.max_k + 1, size=(chunk.size(0),), device="cuda"
+            )
             noised_chunk = (
                 model.alpha_bar[k].sqrt()[:, None, None] * chunk
                 + (1 - model.alpha_bar[k]).sqrt()[:, None, None] * noise
@@ -112,11 +114,17 @@ def my_train(seed: int | None = None):
             loss.backward()
             clip_grad_norm_(model.parameters(), grad_clip_at)
             opt.step()
+            sched.step()
 
-            ema_sd = {
-                n: ema_decay * w + (1 - ema_decay) * model.state_dict()[n]
-                for n, w in ema_sd.items()
-            }
+            model_sd = model.state_dict()
+            with torch.no_grad():
+                ema_sd = {
+                    n: (
+                        ema_decay * ema_sd[n]
+                        + (1 - ema_decay) * model_sd[n]
+                    )
+                    for n in ema_sd.keys()
+                }
 
             losses.append(loss.item())
             rolling_avg_loss += loss.item() / log_every
@@ -148,20 +156,22 @@ def my_train(seed: int | None = None):
             #         print(f"{avg_sum_imputed_reward=}, {success_rate=}")
             #     model.train()
             if step % checkpoint_every == 0:
-                torch.save(model.state_dict(), f"outputs/my_act/step_{step:06d}.pt")
-                torch.save(ema_sd, f"outputs/my_act/ema_step_{step:06d}.pt")
+                torch.save(
+                    {"model_config": config, "model_state": model.state_dict(), "ema_state": ema_sd, "stats": stats, "opt_state": opt.state_dict()},
+                    f"outputs/my_dp/step_{step:06d}.pt",
+                )
             step += 1
-    np.save("outputs/my_act/losses.npy", losses)
-    np.save("outputs/my_act/avg_losses.npy", avg_losses)
-    np.save("outputs/my_act/avg_sum_imputed_rewards.npy", avg_sum_imputed_rewards)
-    np.save("outputs/my_act/success_rates.npy", success_rates)
+    np.save("outputs/my_dp/losses.npy", losses)
+    np.save("outputs/my_dp/avg_losses.npy", avg_losses)
+    np.save("outputs/my_dp/avg_sum_imputed_rewards.npy", avg_sum_imputed_rewards)
+    np.save("outputs/my_dp/success_rates.npy", success_rates)
 
     plt.plot(range(1, num_batches + 1, log_every), avg_losses)
     plt.xlabel("Step")
     plt.ylabel("Training loss")
     plt.yscale("log")
     plt.grid()
-    plt.savefig("outputs/my_act/loss_curve.png", dpi=150, bbox_inches="tight")
+    plt.savefig("outputs/my_dp/loss_curve.png", dpi=150, bbox_inches="tight")
     plt.show()
 
 
