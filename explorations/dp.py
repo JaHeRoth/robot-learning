@@ -65,22 +65,34 @@ from matplotlib import pyplot as plt
 fps = 10
 ds = LeRobotDataset(
     "lerobot/pusht",
-    delta_timestamps={"action": [i / fps for i in range(chunk_len)]}
+    delta_timestamps={
+        "observation.image": [-1 / fps, 0],
+        "observation.state": [-1 / fps, 0],
+        "action": [i / fps for i in range(chunk_len)],
+    }
 )
-loader = DataLoader(ds, batch_size=8, shuffle=True)
+torch.manual_seed(0)
+B = 8
+loader = DataLoader(ds, batch_size=B, shuffle=True)
 batch = next(iter(loader))
-img = batch["observation.image"].unsqueeze(1).cuda()
+imgs = batch["observation.image"].cuda()
 proprio = batch["observation.state"].cuda()
 proprio = (proprio - proprio.mean(axis=0)) / proprio.std(axis=0)
 chunk = batch["action"].cuda()
 chunk = (chunk - chunk.mean(axis=0)) / chunk.std(axis=0)
 
-act = ACT(action_dim=2, chunk_len=chunk_len, cfg=ACTConfig(dropout=0.0)).cuda()
-opt = AdamW(act.parameters(), lr=1e-4)
+dp = DiffusionPolicy(DPConfig(proprio_dim=2)).cuda()
+opt = AdamW(dp.parameters(), lr=1e-4)
+noise = torch.randn_like(chunk)
+k = torch.randint(low=1, high=101, size=(B,), device="cuda")
+noised_chunk = (
+    dp.alpha_bar[k].sqrt()[:, None, None] * chunk
+    + (1 - dp.alpha_bar[k]).sqrt()[:, None, None] * noise
+)
 losses = []
 for _ in tqdm(range(1000)):
-    chunk_pred, z_mean, z_logvar = act(img, proprio, chunk)
-    loss = F.l1_loss(chunk_pred, chunk)
+    eps_hat = dp(imgs, proprio, k, chunk=noised_chunk)
+    loss = F.mse_loss(eps_hat, noise)
     opt.zero_grad()
     loss.backward()
     opt.step()
@@ -88,7 +100,7 @@ for _ in tqdm(range(1000)):
 
 plt.plot(losses)
 plt.xlabel("Optimizer steps")
-plt.ylabel("L1 loss")
+plt.ylabel("L2 loss")
 plt.yscale("log")
 plt.show()
 
