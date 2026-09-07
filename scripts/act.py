@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass
 
 import torch
@@ -241,10 +242,8 @@ class ACTPolicy(Module):
             self.active_chunks.popleft()
         self.active_chunks.append(chunk)
         n_active = len(self.active_chunks)
-        factors = (
-            self.te_factor ** (torch.arange(n_active) != (n_active - 1))
-            * (1 - self.te_factor) ** torch.arange(n_active)
-        )
+        factors = torch.exp(-self.te_factor * torch.arange(n_active, device=chunk.device))
+        factors /= factors.sum()
         actions = [
             chunk[:, n_active - 1 - i, :]
             for i, chunk in enumerate(self.active_chunks)
