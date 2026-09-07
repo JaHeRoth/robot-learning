@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from matplotlib import pyplot as plt
 import numpy as np
+from lerobot.datasets.sampler import EpisodeAwareSampler
 
 from scripts.dp import DiffusionPolicy, DPConfig
 
@@ -20,6 +21,21 @@ def _normalize(x: Tensor, stats: dict) -> Tensor:
 
 def _denormalize(x: Tensor, stats: dict) -> Tensor:
     return (x + 1) / 2 * (stats["max"] - stats["min"]) + stats["min"]
+
+
+def random_crop(
+    imgs: Tensor,  # (B, n_obs, n_channels, height, width)
+    full = 96,  # Assuming squared images
+    crop = 84,
+):
+    start_row = torch.randint(low=0, high=full - crop + 1, size=imgs.shape[0:1])
+    start_col = torch.randint(low=0, high=full - crop + 1, size=imgs.shape[0:1])
+    return torch.stack(
+        [
+            img[:, :, y:y + crop, x:x + crop]
+            for img, y, x in zip(imgs, start_row, start_col)
+        ]
+    )
 
 
 def my_train(seed: int | None = None):
@@ -38,6 +54,7 @@ def my_train(seed: int | None = None):
     adam_warmup = 500
 
     num_batches = 100_000
+    drop_n_last_frames = 7
     log_every = 100
     eval_every = 1000
     checkpoint_every = 20_000
@@ -54,7 +71,10 @@ def my_train(seed: int | None = None):
             "action": [i / fps for i in range(chunk_len)],
         },
     )
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4)
+    sampler = EpisodeAwareSampler(
+        episode_data_index=ds.episode_data_index, drop_n_last_frames=drop_n_last_frames, shuffle=True
+    )
+    loader = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=4)
 
     config = DPConfig(
         proprio_dim=ds.meta.features["observation.state"]["shape"][0],
@@ -91,7 +111,7 @@ def my_train(seed: int | None = None):
         for batch in loader:
             if step > num_batches:
                 break
-            imgs = batch["observation.image"].cuda()
+            imgs = random_crop(batch["observation.image"]).cuda()
             proprio = batch["observation.state"].cuda()
             proprio = _normalize(proprio, stats=stats["observation.state"])
             chunk = batch["action"].cuda()
