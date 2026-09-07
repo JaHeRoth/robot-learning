@@ -1,20 +1,19 @@
 from pathlib import Path
-from time import time
 from typing import Iterable
 
 import mujoco
 import numpy as np
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from tqdm import tqdm
 from gymnasium import Env, spaces
-from mujoco import MjModel, MjData
+from gymnasium.vector import AsyncVectorEnv
+from gymnasium.wrappers import TimeLimit
+from mujoco import MjModel
 
-from scripts.generate_so100_reach_data import sample_q_init_and_target, generate_expert_trajectory
+from scripts.generate_so100_reach_data import sample_q_init_and_target
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class SO100Reach(Env):
-    def __init__(self, mjmodel: MjModel, seed: int):
+    def __init__(self, mjmodel: MjModel):
         super().__init__()
         imgshape = (96, 96, 3)
         fps = 25
@@ -38,7 +37,6 @@ class SO100Reach(Env):
         self.distance_threshold = float(mjmodel.geom_size[geom_id][0])  # 0.02
         self.n_within_threshold = 10  # Matches linger on target in dataset
         self.n_within = 0
-        self.reset(seed)
 
     def _capture_obs(self):
         mujoco.mj_forward(self.mjmodel, self.mjdata)
@@ -48,12 +46,11 @@ class SO100Reach(Env):
             "observation.state": self.mjdata.qpos.copy().astype(np.float32),
         }
 
-    def reset(self, seed: int | None = None, options = None) -> tuple[dict, dict]:
-        if seed is not None:
-            self.rng = np.random.default_rng(seed)
+    def reset(self, *, seed: int | None = None, options=None) -> tuple[dict, dict]:
+        super().reset(seed=seed)  # Seeds self.np_random, but only when seed is given
         mujoco.mj_resetData(self.mjmodel, self.mjdata)
         self.q_init, self.q_target = sample_q_init_and_target(
-            self.rng, self.mjmodel, self.mjdata, self.renderer
+            self.np_random, self.mjmodel, self.mjdata, self.renderer
         )
         self.mjdata.qpos = self.q_init.copy()
         self.n_within = 0
@@ -79,17 +76,25 @@ class SO100Reach(Env):
         return obs, reward, terminated, truncated, info
 
 
+def make_so100_env(n_envs: int, horizon: int) -> AsyncVectorEnv:
+    model_path = str(REPO_ROOT / "scenes/so100_reach/scene.xml")
+    def thunk():
+        mjmodel = mujoco.MjModel.from_xml_path(model_path)
+        return TimeLimit(SO100Reach(mjmodel), max_episode_steps=horizon)
+    return AsyncVectorEnv([thunk for _ in range(n_envs)])
+
+
 def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:
     horizon = 150
     mjmodel = mujoco.MjModel.from_xml_path(
         str(REPO_ROOT / "scenes/so100_reach/scene.xml")
     )
-    env = SO100Reach(mjmodel=mjmodel, seed=0)
+    env = SO100Reach(mjmodel=mjmodel)
     imputed_reward = -env.distance_threshold  # Credited per step from success onward
     avg_imputed_sum_reward = 0.0
     success_rate = 0.0
     for seed in seeds:
-        env.reset(seed)
+        env.reset(seed=seed)
         ctrl_steps = np.random.default_rng(seed).integers(low=50, high=100)
         for i in range(horizon):
             frac = min((i + 1) / ctrl_steps, 1.0)
@@ -103,3 +108,6 @@ def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:
     print(f"{avg_imputed_sum_reward=}")
     print(f"{success_rate=}")
     return avg_imputed_sum_reward, success_rate
+
+if __name__ == "__main__":
+    eval_experts(range(1000, 1100))
