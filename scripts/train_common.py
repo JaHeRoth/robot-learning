@@ -4,26 +4,40 @@ Everything method-specific about a step lives in the caller's loss_fn, which
 receives the raw CPU batch and owns device transfer, normalization,
 augmentation, and the loss itself.
 """
+import json
 from pathlib import Path
 
+import imageio
 import numpy as np
 import torch
+from gymnasium.vector import VectorEnv
 from matplotlib import pyplot as plt
 from torch.nn.utils import clip_grad_norm_
 
+from scripts.my_rollout import my_rollout
 
-def run_eval(env: VectorEnv, policy: ACTPolicy, eval_seeds: list[int], step: int, record_n: int):
-    out = my_rollout(env, policy, eval_seeds)
-    success_rate = out["success"].any(dim=1).float().mean()
+
+def run_eval(
+    env: VectorEnv,
+    policy,
+    eval_seeds: list[int],
+    step: int,
+    out_dir: str | Path,
+    record_n: int,
+    fps: int,
+) -> dict:
+    out = my_rollout(env, policy, eval_seeds, record_n=record_n)
+    success_rate = out["success"].any(dim=1).float().mean().item()
     print(f"step {step}: success={success_rate:.3f}")
 
-    for i in range(record_n):
-        if out["done"][i].any():
-            imgs = out["pixels"][i, :out["done"][i].int().argmax() + 1]
-        else:
-            imgs = out["pixels"][i]
-        uri = video_dir / f"step{step:06d}_ep{i}.mp4"
-        imageio.mimsave(uri=uri, imgs=imgs, fps=10)
+    if record_n:
+        video_dir = Path(out_dir) / "videos"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(record_n):
+            done_i = out["done"][i]
+            cut = int(done_i.int().argmax()) + 1 if done_i.any() else len(done_i)
+            imgs = out["pixels"][i, :cut].numpy()
+            imageio.mimsave(uri=video_dir / f"step{step:06d}_ep{i}.mp4", ims=imgs, fps=fps)
 
     return dict(success_rate=success_rate)
 
@@ -44,7 +58,7 @@ def train_loop(
     checkpoint_every: int = 20_000,
     checkpoint_extra: dict | None = None,  # static entries merged into every checkpoint
     eval_every: int | None = None,
-    eval_fn=None,  # (model, step) -> None, called every eval_every steps
+    eval_fn=None,  # (model, step, out_dir) -> dict, called every eval_every steps
 ):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +69,7 @@ def train_loop(
 
     losses = []
     avg_losses = []
+    eval_history = []
     rolling_avg_loss = 0.0
     step = 1
     while step <= num_batches:
@@ -87,7 +102,7 @@ def train_loop(
             if eval_fn is not None and step % eval_every == 0:
                 model.eval()
                 with torch.no_grad():
-                    eval_fn(model, step)
+                    eval_history.append((step, eval_fn(model, step, out_dir)))
                 model.train()
 
             if step % checkpoint_every == 0:
@@ -105,6 +120,9 @@ def train_loop(
 
     np.save(out_dir / "losses.npy", losses)
     np.save(out_dir / "avg_losses.npy", avg_losses)
+    if eval_history:
+        with open(out_dir / "eval_history.json", "w") as f:
+            json.dump(eval_history, f, indent=2)
     plt.plot(range(log_every, len(avg_losses) * log_every + 1, log_every), avg_losses)
     plt.xlabel("Step")
     plt.ylabel("Training loss")

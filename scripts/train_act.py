@@ -1,16 +1,13 @@
 from functools import partial
 
-import imageio
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from lerobot.envs.factory import make_env, make_env_config
-from gymnasium.vector import VectorEnv
 
-from scripts.my_rollout import my_rollout
 from scripts.act import ACT, ACTPolicy
-from scripts.train_common import train_loop
+from scripts.train_common import run_eval, train_loop
 
 
 def act_loss(model, batch, stats, kl_weight):
@@ -38,7 +35,7 @@ def train_act(seed: int = 0):
 
     num_batches = 100_000
     n_action_steps = 16
-    eval_every = 1000
+    eval_every = 10_000
     n_eval_envs = 50
     n_recorded = 10
 
@@ -57,16 +54,18 @@ def train_act(seed: int = 0):
             attr: torch.as_tensor(
                 ds.meta.stats[obj][attr], dtype=torch.float32, device="cuda"
             )
-            for attr in ["min", "max", "mean", "std"]
+            for attr in ["mean", "std"]
         }
         for obj in ["action", "observation.state"]
     }
 
     env = make_env(make_env_config("pusht"), n_envs=n_eval_envs)
     eval_seeds = list(range(1000, 1000 + n_eval_envs))
-    def eval_fn(model, step):
+    def eval_fn(model, step, out_dir):
         policy = ACTPolicy(model, dataset_stats=stats, n_action_steps=n_action_steps)
-        return eval_act(env, policy, eval_seeds, step, n_recorded)
+        return run_eval(
+            env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps
+        )
 
     train_loop(
         model=model,

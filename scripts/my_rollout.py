@@ -8,7 +8,7 @@ from gymnasium.vector import VectorEnv
 
 
 def my_rollout(
-    env: VectorEnv, policy: PreTrainedPolicy, seeds: int | list[int] | None, record_n: int = 0
+    env: VectorEnv, policy: PreTrainedPolicy, seeds: int | list[int] | None, record_n: int
 ) -> dict[str, torch.Tensor]:
     assert not isinstance(seeds, list) or len(seeds) == env.num_envs
 
@@ -60,9 +60,9 @@ def test_my_rollout():
     policy = ACTPolicy.from_pretrained("jaheroth/act_pusht_baseline").to(device)
     seeds = list(range(n_envs))
     expectation = rollout(env, policy, seeds)
-    reality = my_rollout(env, policy, seeds)
-    for k, v in reality.items():
-        assert v.allclose(expectation[k]), f"{k} deviates from expectation"
+    reality = my_rollout(env, policy, seeds, record_n=2)
+    for k in ["reward", "success", "done"]:
+        assert reality[k].allclose(expectation[k]), f"{k} deviates from expectation"
 
 
 if __name__ == "__main__":
