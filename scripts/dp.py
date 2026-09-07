@@ -155,7 +155,7 @@ class Denoiser(Module):
     def forward(
         self,
         img_encoding: Tensor,  # (B, n_obs * n_resnet18_out_channels)
-        proprio: Tensor,  # (B, n_obs, dof)
+        proprios: Tensor,  # (B, n_obs, dof)
         t: Tensor,  # (B,), normalized time in [0, 1]
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
@@ -163,7 +163,7 @@ class Denoiser(Module):
             _time_embedding(t=t, dim=self.dim_t_encoding)
         )
         conditioner = torch.cat(
-            [img_encoding, proprio.flatten(start_dim=1), t_encoding],
+            [img_encoding, proprios.flatten(start_dim=1), t_encoding],
             dim=-1,
         )
         eps_hat = self.unet(conditioner, chunk)
@@ -262,19 +262,19 @@ class DiffusionPolicy(Module):
     def forward(
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
-        proprio: Tensor,  # (B, n_obs, dof)
+        proprios: Tensor,  # (B, n_obs, dof)
         k: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         imgs_encoding = self.imgs_encoder(imgs)
-        eps_hat = self.denoiser(imgs_encoding, proprio, t=k / self.config.max_k, chunk=chunk)
+        eps_hat = self.denoiser(imgs_encoding, proprios, t=k / self.config.max_k, chunk=chunk)
         return eps_hat
 
     @torch.no_grad()
     def sample(
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
-        proprio: Tensor,  # (B, n_obs, dof)
+        proprios: Tensor,  # (B, n_obs, dof)
         n_steps: int | None,
     ) -> Tensor:
         """DDPM if n_steps is None, else DDIM with that many steps."""
@@ -282,7 +282,7 @@ class DiffusionPolicy(Module):
         max_k = self.config.max_k
         device = imgs.device
         chunk = torch.randn(
-            proprio.size(0), self.config.chunk_len, proprio.size(-1), device=device
+            proprios.size(0), self.config.chunk_len, proprios.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
         if n_steps is None:
@@ -291,7 +291,7 @@ class DiffusionPolicy(Module):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, t=k_tensor / self.config.max_k, chunk=chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprios, t=k_tensor / self.config.max_k, chunk=chunk)
                 chunk = (
                     (1 / self.alpha[k].sqrt()) * (chunk - self.beta[k] / (1 - self.alpha_bar[k]).sqrt() * eps_hat)
                     + self.beta_tilde[k].sqrt() * z[k]
@@ -302,7 +302,7 @@ class DiffusionPolicy(Module):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, t=k_tensor / self.config.max_k, chunk=chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprios, t=k_tensor / self.config.max_k, chunk=chunk)
                 target_k = ks[i + 1] if i + 1 < n_steps else 0
                 chunk = (
                     (self.alpha_bar[target_k] / self.alpha_bar[k]).sqrt() * chunk
@@ -324,24 +324,24 @@ class FlowMatchingPolicy(Module):
     def forward(
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
-        proprio: Tensor,  # (B, n_obs, dof)
+        proprios: Tensor,  # (B, n_obs, dof)
         t: Tensor,  # (B,), normalized time in [0, 1]
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         imgs_encoding = self.imgs_encoder(imgs)
-        velocity = self.denoiser(imgs_encoding, proprio, t, chunk)
+        velocity = self.denoiser(imgs_encoding, proprios, t, chunk)
         return velocity
 
     @torch.no_grad()
     def sample(
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
-        proprio: Tensor,  # (B, n_obs, dof)
+        proprios: Tensor,  # (B, n_obs, dof)
         n_steps: int,
     ) -> Tensor:
         device, step_size = imgs.device, 1 / n_steps
         chunk = torch.randn(
-            proprio.size(0), self.config.chunk_len, proprio.size(-1), device=device
+            proprios.size(0), self.config.chunk_len, proprios.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
         ts = torch.linspace(start=0, end=1, steps=n_steps + 1)[:0:-1].tolist()
@@ -349,7 +349,7 @@ class FlowMatchingPolicy(Module):
             t_tensor = torch.full(
                 size=(len(imgs),), fill_value=t, device=device
             )  # (B,)
-            velocity = self.denoiser(imgs_encoding, proprio, t_tensor, chunk)
+            velocity = self.denoiser(imgs_encoding, proprios, t_tensor, chunk)
             chunk -= step_size * velocity
         return chunk
 
@@ -409,7 +409,7 @@ class GenPolicy(Module):
         if self.n_steps_till_action <= 0:
             imgs = torch.stack([img for img, _ in self.obs_hist], dim=1)
             proprios = torch.stack([proprio for _, proprio in self.obs_hist], dim=1)
-            chunk_pred = self.model.sample(imgs=imgs, proprio=proprios, n_steps=self.n_steps)
+            chunk_pred = self.model.sample(imgs=imgs, proprios=proprios, n_steps=self.n_steps)
             self.chunk = denormalize(chunk_pred, min=self.action_min, max=self.action_max)
             self.n_steps_till_action = self.n_action_steps
 

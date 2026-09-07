@@ -43,7 +43,7 @@ def random_crop(
 
 def dp_loss(model, batch, stats):
     imgs = random_crop(batch["observation.image"]).cuda()
-    proprio = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
+    proprios = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
     chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
     loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
 
@@ -55,13 +55,13 @@ def dp_loss(model, batch, stats):
         model.alpha_bar[k].sqrt()[:, None, None] * chunk
         + (1 - model.alpha_bar[k]).sqrt()[:, None, None] * noise
     )
-    noise_pred = model(imgs, proprio, k, chunk=noised_chunk)
+    noise_pred = model(imgs, proprios, k, chunk=noised_chunk)
     return ((noise_pred - noise).pow(2) * loss_mask).mean()
 
 
 def fmp_loss(model, batch, stats):
     imgs = random_crop(batch["observation.image"]).cuda()
-    proprio = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
+    proprios = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
     chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
     loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
 
@@ -69,7 +69,7 @@ def fmp_loss(model, batch, stats):
     velocity = noise - chunk
     t = torch.rand(size=chunk.shape[0:1]).cuda()
     noised_chunk = (1 - t[:, None, None]) * chunk + t[:, None, None] * noise
-    velocity_pred = model(imgs, proprio, t, chunk=noised_chunk)
+    velocity_pred = model(imgs, proprios, t, chunk=noised_chunk)
     return ((velocity_pred - velocity).pow(2) * loss_mask).mean()
 
 

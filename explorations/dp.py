@@ -14,7 +14,7 @@ max_k = 100
 chunk_len = 48
 
 imgs = torch.rand(batch_size, n_obs, 3, 96, 96)
-proprio = torch.randn(batch_size, n_obs, proprio_dim)
+proprios = torch.randn(batch_size, n_obs, proprio_dim)
 k = torch.randint(low=1, high=max_k + 1, size=(batch_size,))
 chunk = torch.randn(batch_size, chunk_len, proprio_dim)
 
@@ -35,18 +35,18 @@ print(f"Our param count: {sum(p.numel() for p in dp.denoiser.parameters())}")
 # %%
 # # Smoke tests
 # training
-eps_hat = dp(imgs, proprio, k, chunk)
+eps_hat = dp(imgs, proprios, k, chunk)
 assert eps_hat.shape == chunk.shape, "Wrong output dimension"
 # inference
-ddpm_chunk = dp.sample(imgs, proprio, original=True)
+ddpm_chunk = dp.sample(imgs, proprios, n_steps=None)
 assert ddpm_chunk.shape == chunk.shape, "Wrong output dimension"
-ddim_chunk = dp.sample(imgs, proprio, original=False)
+ddim_chunk = dp.sample(imgs, proprios, n_steps=10)
 assert ddim_chunk.shape == chunk.shape, "Wrong output dimension"
 
 # %%
 # Gradient flow test
 dp = DiffusionPolicy(DPConfig(max_k=max_k, chunk_len=chunk_len))
-eps_hat = dp(imgs, proprio, k, chunk)
+eps_hat = dp(imgs, proprios, k, chunk)
 dp.zero_grad()
 loss = eps_hat.abs().mean()
 loss.backward()
@@ -76,8 +76,8 @@ B = 8
 loader = DataLoader(ds, batch_size=B, shuffle=True)
 batch = next(iter(loader))
 imgs = batch["observation.image"].cuda()
-proprio = batch["observation.state"].cuda()
-proprio = (proprio - proprio.mean(axis=0)) / proprio.std(axis=0)
+proprios = batch["observation.state"].cuda()
+proprios = (proprios - proprios.mean(axis=0)) / proprios.std(axis=0)
 chunk = batch["action"].cuda()
 chunk = (chunk - chunk.mean(axis=0)) / chunk.std(axis=0)
 
@@ -91,7 +91,7 @@ noised_chunk = (
 )
 losses = []
 for _ in tqdm(range(1000)):
-    eps_hat = dp(imgs, proprio, k, chunk=noised_chunk)
+    eps_hat = dp(imgs, proprios, k, chunk=noised_chunk)
     loss = F.mse_loss(eps_hat, noise)
     opt.zero_grad()
     loss.backward()
