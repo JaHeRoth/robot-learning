@@ -22,10 +22,10 @@ class DPConfig:
         return 2 * self.n_keypoints  # Two coordinates per keypoint
 
 
-def _time_embedding(t: Tensor, dim: int, max_freq: float):
+def _time_embedding(t: Tensor, dim: int):
     """t.shape = (B,). 0 <= t <= 1"""
     assert dim % 2 == 0
-    w = max_freq ** (1 - 2 * torch.arange(dim // 2, device=t.device) / dim)
+    w = 1000 ** (1 - 2 * torch.arange(dim // 2, device=t.device) / dim)  # Resolves ~1000 distinct times
     tw = (t.unsqueeze(1) * w.unsqueeze(0))  # (B, dim // 2)
     return torch.stack([tw.sin(), tw.cos()], dim=-1).flatten(start_dim=1)
 
@@ -142,7 +142,6 @@ class Denoiser(Module):
     def __init__(self, config: DPConfig):
         super().__init__()
         self.dim_t_encoding = config.dim_t_encoding
-        self.max_freq = config.max_k
         self.t_encoder = Sequential(
             Linear(config.dim_t_encoding, 512),
             Mish(),
@@ -160,7 +159,7 @@ class Denoiser(Module):
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         t_encoding = self.t_encoder(
-            _time_embedding(t=t, dim=self.dim_t_encoding, max_freq=self.max_freq)
+            _time_embedding(t=t, dim=self.dim_t_encoding)
         )
         conditioner = torch.cat(
             [img_encoding, proprio.flatten(start_dim=1), t_encoding],
