@@ -1,3 +1,5 @@
+from enum import Enum
+
 import diffusers
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -6,7 +8,7 @@ from torch import Tensor
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from scripts.dp import DiffusionPolicy, DPConfig
+from scripts.dp import DiffusionPolicy, DPConfig, FlowMatchingPolicy
 from scripts.train_common import train_loop
 
 
@@ -41,8 +43,8 @@ def dp_loss(model, batch, stats):
 
     noise = torch.randn_like(chunk)
     k = torch.randint(
-        low=1, high=model.config.max_k + 1, size=(chunk.size(0),), device="cuda"
-    )
+        low=1, high=model.config.max_k + 1, size=chunk.shape[0:1]
+    ).cuda()
     noised_chunk = (
         model.alpha_bar[k].sqrt()[:, None, None] * chunk
         + (1 - model.alpha_bar[k]).sqrt()[:, None, None] * noise
@@ -51,7 +53,26 @@ def dp_loss(model, batch, stats):
     return ((noise_pred - noise).pow(2) * loss_mask).mean()
 
 
-def train_dp(seed: int = 0):
+def fmp_loss(model, batch, stats):
+    imgs = random_crop(batch["observation.image"]).cuda()
+    proprio = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
+    chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
+    loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
+
+    noise = torch.randn_like(chunk)
+    velocity = noise - chunk
+    t = torch.rand(size=chunk.shape[0:1]).cuda()
+    noised_chunk = (1 - t[:, None, None]) * chunk + t[:, None, None] * noise
+    velocity_pred = model(imgs, proprio, t, chunk=noised_chunk)
+    return ((velocity_pred - velocity).pow(2) * loss_mask).mean()
+
+
+class LossType(Enum):
+    DIFFUSION = "diffusion"
+    FLOW_MATCHING = "flow_matching"
+
+
+def train_dp(loss_type: LossType, seed: int = 0):
     torch.manual_seed(seed)
 
     chunk_len = 16
@@ -85,7 +106,15 @@ def train_dp(seed: int = 0):
         proprio_dim=ds.meta.features["observation.state"]["shape"][0],
         chunk_len=chunk_len,
     )
-    model = DiffusionPolicy(config).cuda()
+    if loss_type == LossType.DIFFUSION:
+        loss_fn = dp_loss
+        out_dir = "outputs/my_dp"
+        model = DiffusionPolicy(config).cuda()
+    else:
+        loss_fn = fmp_loss
+        out_dir = "outputs/my_fmp"
+        model = FlowMatchingPolicy(config).cuda()
+
     opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=adam_betas)
     sched = diffusers.optimization.get_scheduler("cosine", opt, num_warmup_steps=adam_warmup, num_training_steps=num_batches)
 
@@ -104,10 +133,10 @@ def train_dp(seed: int = 0):
         loader=loader,
         opt=opt,
         sched=sched,
-        loss_fn=dp_loss,
+        loss_fn=loss_fn,
         stats=stats,
         num_batches=num_batches,
-        out_dir="outputs/my_dp",
+        out_dir=out_dir,
         ema_decay=ema_decay,
         grad_clip_at=grad_clip_at,
         checkpoint_extra={"model_config": config},
@@ -115,4 +144,4 @@ def train_dp(seed: int = 0):
 
 
 if __name__ == "__main__":
-    train_dp()
+    train_dp(loss_type=LossType.FLOW_MATCHING)

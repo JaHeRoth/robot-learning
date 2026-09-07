@@ -14,7 +14,7 @@ class DPConfig:
     n_obs: int = 2
     n_keypoints: int = 32
     proprio_dim: int = 6
-    dim_k_encoding: int = 128
+    dim_t_encoding: int = 128
     like_lerobot: bool = True
 
     @property
@@ -117,7 +117,7 @@ class UNet(Module):
 
     def forward(
         self,
-        conditioner: Tensor,  # (B, n_obs * (n_resnet18_out_channels + dof) + dim_k_encoding)
+        conditioner: Tensor,  # (B, n_obs * (n_resnet18_out_channels + dof) + dim_t_encoding)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         assert chunk.size(1) % 4 == 0, "Chunk length must be multiple of 4"
@@ -141,29 +141,29 @@ class UNet(Module):
 class Denoiser(Module):
     def __init__(self, config: DPConfig):
         super().__init__()
-        self.dim_k_encoding = config.dim_k_encoding
-        self.max_k = config.max_k
-        self.k_encoder = Sequential(
-            Linear(config.dim_k_encoding, 512),
+        self.dim_t_encoding = config.dim_t_encoding
+        self.max_freq = config.max_k
+        self.t_encoder = Sequential(
+            Linear(config.dim_t_encoding, 512),
             Mish(),
-            Linear(512, config.dim_k_encoding),
+            Linear(512, config.dim_t_encoding),
         )
-        # Width of the concat in forward below: per-obs image features and proprio, plus the k encoding
-        cond_dim = config.n_obs * (config.latent_img_depth + config.proprio_dim) + config.dim_k_encoding
+        # Width of the concat in forward below: per-obs image features and proprio, plus the t encoding
+        cond_dim = config.n_obs * (config.latent_img_depth + config.proprio_dim) + config.dim_t_encoding
         self.unet = UNet(config, cond_dim=cond_dim)
     
     def forward(
         self,
         img_encoding: Tensor,  # (B, n_obs * n_resnet18_out_channels)
         proprio: Tensor,  # (B, n_obs, dof)
-        k: Tensor,  # (B,)
+        t: Tensor,  # (B,), normalized time in [0, 1]
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
-        k_encoding = self.k_encoder(
-            _time_embedding(t=k / self.max_k, dim=self.dim_k_encoding, max_freq=self.max_k)
+        t_encoding = self.t_encoder(
+            _time_embedding(t=t, dim=self.dim_t_encoding, max_freq=self.max_freq)
         )
         conditioner = torch.cat(
-            [img_encoding, proprio.flatten(start_dim=1), k_encoding],
+            [img_encoding, proprio.flatten(start_dim=1), t_encoding],
             dim=-1,
         )
         eps_hat = self.unet(conditioner, chunk)
@@ -267,7 +267,7 @@ class DiffusionPolicy(Module):
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         imgs_encoding = self.imgs_encoder(imgs)
-        eps_hat = self.denoiser(imgs_encoding, proprio, k, chunk)
+        eps_hat = self.denoiser(imgs_encoding, proprio, t=k / self.config.max_k, chunk=chunk)
         return eps_hat
 
     @torch.no_grad()
@@ -288,7 +288,7 @@ class DiffusionPolicy(Module):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprio, t=k_tensor / self.config.max_k, chunk=chunk)
                 chunk = (
                     (1 / self.alpha[k].sqrt()) * (chunk - self.beta[k] / (1 - self.alpha_bar[k]).sqrt() * eps_hat)
                     + self.beta_tilde[k].sqrt() * z[k]
@@ -299,7 +299,7 @@ class DiffusionPolicy(Module):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
-                eps_hat = self.denoiser(imgs_encoding, proprio, k_tensor, chunk)
+                eps_hat = self.denoiser(imgs_encoding, proprio, t=k_tensor / self.config.max_k, chunk=chunk)
                 target_k = max(0, k - k_step)
                 chunk = (
                     (self.alpha_bar[target_k] / self.alpha_bar[k]).sqrt() * chunk
@@ -308,4 +308,44 @@ class DiffusionPolicy(Module):
                         - (self.alpha_bar[target_k] * (1 - self.alpha_bar[k]) / self.alpha_bar[k]).sqrt()
                     ) * eps_hat
                 )
+        return chunk
+
+
+class FlowMatchingPolicy(Module):
+    def __init__(self, config: DPConfig):
+        super().__init__()
+        self.config = config
+        self.imgs_encoder = ImgsEncoder(config)
+        self.denoiser = Denoiser(config)
+
+    def forward(
+        self,
+        imgs: Tensor,  # (B, n_obs, n_channels, height, width)
+        proprio: Tensor,  # (B, n_obs, dof)
+        t: Tensor,  # (B,), normalized time in [0, 1]
+        chunk: Tensor,  # (B, chunk_len, dof)
+    ) -> Tensor:
+        imgs_encoding = self.imgs_encoder(imgs)
+        velocity = self.denoiser(imgs_encoding, proprio, t, chunk)
+        return velocity
+
+    @torch.no_grad()
+    def sample(
+        self,
+        imgs: Tensor,  # (B, n_obs, n_channels, height, width)
+        proprio: Tensor,  # (B, n_obs, dof)
+        n_steps: int,
+    ) -> Tensor:
+        device, step_size = imgs.device, 1 / n_steps
+        chunk = torch.randn(
+            proprio.size(0), self.config.chunk_len, proprio.size(-1), device=device
+        )
+        imgs_encoding = self.imgs_encoder(imgs)
+        ts = torch.linspace(start=0, end=1, steps=n_steps + 1)[:0:-1].tolist()
+        for t in ts:
+            t_tensor = torch.full(
+                size=(len(imgs),), fill_value=t, device=device
+            )  # (B,)
+            velocity = self.denoiser(imgs_encoding, proprio, t_tensor, chunk)
+            chunk -= step_size * velocity
         return chunk
