@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass
 
 import torch
@@ -274,14 +275,17 @@ class DiffusionPolicy(Module):
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
         proprio: Tensor,  # (B, n_obs, dof)
-        original: bool = False  # DDPM if true, DDIM if false
+        n_steps: int | None,
     ) -> Tensor:
+        """DDPM if n_steps is None, else DDIM with that many steps."""
+        
+        max_k = self.config.max_k
         device = imgs.device
         chunk = torch.randn(
             proprio.size(0), self.config.chunk_len, proprio.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        if original:
+        if n_steps is None:
             z = torch.randn(self.config.max_k + 1, *chunk.size(), device=device)  # (max_k + 1, B, chunk_len, dof)
             for k in reversed(range(1, self.config.max_k + 1)):
                 k_tensor = torch.full(
@@ -293,13 +297,13 @@ class DiffusionPolicy(Module):
                     + self.beta_tilde[k].sqrt() * z[k]
                 )
         else:
-            k_step = 10
-            for k in reversed(range(1, self.config.max_k + 1, k_step)):
+            ks = [round(max_k - i * max_k / n_steps) for i in range(n_steps)]  # Trailing spacing, so k_0 = max_k
+            for i, k in enumerate(ks):
                 k_tensor = torch.full(
                     size=(len(imgs),), fill_value=k, dtype=torch.long, device=device
                 )  # (B,)
                 eps_hat = self.denoiser(imgs_encoding, proprio, t=k_tensor / self.config.max_k, chunk=chunk)
-                target_k = max(0, k - k_step)
+                target_k = ks[i + 1] if i + 1 < n_steps else 0
                 chunk = (
                     (self.alpha_bar[target_k] / self.alpha_bar[k]).sqrt() * chunk
                     + (
@@ -348,3 +352,66 @@ class FlowMatchingPolicy(Module):
             velocity = self.denoiser(imgs_encoding, proprio, t_tensor, chunk)
             chunk -= step_size * velocity
         return chunk
+
+
+def normalize(x: Tensor, min: Tensor, max: Tensor) -> Tensor:  # To [-1, 1]
+    return 2 * (x - min) / (max - min) - 1
+
+
+def denormalize(x: Tensor, min: Tensor, max: Tensor) -> Tensor:
+    return (x + 1) / 2 * (max - min) + min
+
+
+def center_crop(imgs: Tensor, crop: int) -> Tensor:
+    height, width = imgs.shape[-2:]
+    row, col = (height - crop) // 2, (width - crop) // 2
+    return imgs[..., row : row + crop, col : col + crop]
+
+
+class GenPolicy(Module):
+    def __init__(
+        self,
+        model: DiffusionPolicy | FlowMatchingPolicy,
+        dataset_stats: dict[str, dict[str, Tensor]],
+        n_action_steps: int,
+        crop: int,  # center-crop side length, matching the random crop used in training
+        n_steps: int | None,
+    ):
+        super().__init__()
+        assert n_steps is not None or isinstance(model, DiffusionPolicy), (
+            "n_steps cannot be None for FlowMatchingPolicy"
+        )
+        self.model = model
+        self.crop = crop
+        self.n_steps = n_steps
+        self.register_buffer("state_min", dataset_stats["observation.state"]["min"])
+        self.register_buffer("state_max", dataset_stats["observation.state"]["max"])
+        self.register_buffer("action_min", dataset_stats["action"]["min"])
+        self.register_buffer("action_max", dataset_stats["action"]["max"])
+        self.n_action_steps = n_action_steps
+        self.n_steps_till_action = 0
+        self.obs_hist = deque(maxlen=model.config.n_obs)
+
+    def reset(self) -> None:
+        self.n_steps_till_action = 0
+        self.obs_hist.clear()
+
+    @torch.no_grad()
+    def select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
+        img = center_crop(policy_in["observation.image"], self.crop)
+        proprio = normalize(
+            policy_in["observation.state"], min=self.state_min, max=self.state_max
+        )
+        self.obs_hist.append((img, proprio))
+        while len(self.obs_hist) < self.obs_hist.maxlen:
+            self.obs_hist.append((img, proprio))
+            
+        if self.n_steps_till_action <= 0:
+            imgs = torch.stack([img for img, _ in self.obs_hist], dim=1)
+            proprios = torch.stack([proprio for _, proprio in self.obs_hist], dim=1)
+            chunk_pred = self.model.sample(imgs=imgs, proprio=proprios, n_steps=self.n_steps)
+            self.chunk = denormalize(chunk_pred, min=self.action_min, max=self.action_max)
+            self.n_steps_till_action = self.n_action_steps
+
+        self.n_steps_till_action -= 1
+        return self.chunk[:, self.n_action_steps - self.n_steps_till_action - 1, :]

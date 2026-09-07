@@ -147,6 +147,7 @@ class ACT(Module):
     def __init__(self, action_dim: int, chunk_len: int, cfg: ACTConfig | None = None):
         super().__init__()
         cfg = cfg or ACTConfig()
+        self.chunk_len = chunk_len
         self.z_dim = cfg.z_dim
         self.chunk_encoder = ACTEncoder(action_dim=action_dim, chunk_len=chunk_len, cfg=cfg)
         self.image_encoder = Sequential(
@@ -207,11 +208,11 @@ class ACTPolicy(Module):
         self.n_action_steps = n_action_steps
         self.te_factor = te_factor
         self.n_steps_till_action = 0
-        self.active_chunks = deque()
+        self.active_chunks = deque(maxlen=model.chunk_len)
 
     def reset(self) -> None:
         self.n_steps_till_action = 0
-        self.active_chunks = deque()
+        self.active_chunks.clear()
 
     def _normalize(self, x: Tensor, mean: Tensor, std: Tensor) -> Tensor:
         return (x - mean) / std
@@ -238,8 +239,6 @@ class ACTPolicy(Module):
 
     def _te_select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
         chunk = self._compute_next_chunk(policy_in)
-        if len(self.active_chunks) >= chunk.size(1):
-            self.active_chunks.popleft()
         self.active_chunks.append(chunk)
         n_active = len(self.active_chunks)
         factors = torch.exp(-self.te_factor * torch.arange(n_active, device=chunk.device))

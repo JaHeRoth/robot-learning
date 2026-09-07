@@ -8,16 +8,22 @@ from torch import Tensor
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from scripts.dp import DiffusionPolicy, DPConfig, FlowMatchingPolicy
+from scripts.dp import (
+    DiffusionPolicy,
+    DPConfig,
+    FlowMatchingPolicy,
+    denormalize,
+    normalize,
+)
 from scripts.train_common import train_loop
 
 
 def _normalize(x: Tensor, stats: dict) -> Tensor:
-    return 2 * (x - stats["min"]) / (stats["max"] - stats["min"]) - 1
+    return normalize(x, min=stats["min"], max=stats["max"])
 
 
 def _denormalize(x: Tensor, stats: dict) -> Tensor:
-    return (x + 1) / 2 * (stats["max"] - stats["min"]) + stats["min"]
+    return denormalize(x, min=stats["min"], max=stats["max"])
 
 
 def random_crop(
