@@ -33,7 +33,25 @@ def random_crop(
     )
 
 
-def train(seed: int = 0):
+def dp_loss(model, batch, stats):
+    imgs = random_crop(batch["observation.image"]).cuda()
+    proprio = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
+    chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
+    loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
+
+    noise = torch.randn_like(chunk)
+    k = torch.randint(
+        low=1, high=model.config.max_k + 1, size=(chunk.size(0),), device="cuda"
+    )
+    noised_chunk = (
+        model.alpha_bar[k].sqrt()[:, None, None] * chunk
+        + (1 - model.alpha_bar[k]).sqrt()[:, None, None] * noise
+    )
+    noise_pred = model(imgs, proprio, k, chunk=noised_chunk)
+    return ((noise_pred - noise).pow(2) * loss_mask).mean()
+
+
+def train_dp(seed: int = 0):
     torch.manual_seed(seed)
 
     chunk_len = 16
@@ -81,36 +99,20 @@ def train(seed: int = 0):
         for obj in ["action", "observation.state", "observation.image"]
     }
 
-    def loss_fn(model, batch):
-        imgs = random_crop(batch["observation.image"]).cuda()
-        proprio = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
-        chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
-        loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
-
-        noise = torch.randn_like(chunk)
-        k = torch.randint(
-            low=1, high=model.config.max_k + 1, size=(chunk.size(0),), device="cuda"
-        )
-        noised_chunk = (
-            model.alpha_bar[k].sqrt()[:, None, None] * chunk
-            + (1 - model.alpha_bar[k]).sqrt()[:, None, None] * noise
-        )
-        noise_pred = model(imgs, proprio, k, chunk=noised_chunk)
-        return ((noise_pred - noise).pow(2) * loss_mask).mean()
-
     train_loop(
         model=model,
         loader=loader,
         opt=opt,
         sched=sched,
-        loss_fn=loss_fn,
+        loss_fn=dp_loss,
+        stats=stats,
         num_batches=num_batches,
         out_dir="outputs/my_dp",
         ema_decay=ema_decay,
         grad_clip_at=grad_clip_at,
-        checkpoint_extra={"model_config": config, "stats": stats},
+        checkpoint_extra={"model_config": config},
     )
 
 
 if __name__ == "__main__":
-    train()
+    train_dp()

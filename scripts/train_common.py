@@ -17,9 +17,10 @@ def train_loop(
     model,
     loader,
     opt,
-    loss_fn,  # (model, raw CPU batch) -> scalar loss
+    loss_fn,  # (model, raw CPU batch, stats) -> scalar loss
     num_batches: int,
     out_dir: str | Path,
+    stats: dict | None = None,  # normalization stats, handed to loss_fn and saved in checkpoints
     sched=None,
     ema_decay: float | None = None,  # None = no EMA
     grad_clip_at: float = 10.0,
@@ -44,7 +45,7 @@ def train_loop(
         for batch in loader:
             if step > num_batches:
                 break
-            loss = loss_fn(model, batch)
+            loss = loss_fn(model, batch, stats)
             opt.zero_grad()
             loss.backward()
             clip_grad_norm_(model.parameters(), grad_clip_at)
@@ -79,6 +80,8 @@ def train_loop(
                     "opt_state": opt.state_dict(),
                     **(checkpoint_extra or {}),
                 }
+                if stats is not None:
+                    ckpt["stats"] = stats
                 if ema_sd is not None:
                     ckpt["ema_state"] = ema_sd
                 torch.save(ckpt, out_dir / f"step_{step:06d}.pt")
