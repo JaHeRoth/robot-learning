@@ -25,10 +25,25 @@ def run_eval(
     out_dir: str | Path,
     record_n: int,
     fps: int,
+    imputed_reward: float,  # Credited per step from success onward, to horizon
 ) -> dict:
     out = my_rollout(env, policy, eval_seeds, record_n=record_n)
-    success_rate = out["success"].any(dim=1).float().mean().item()
-    print(f"step {step}: success={success_rate:.3f}")
+    succeeded = out["success"].any(dim=1, keepdim=True)
+    success_rate = succeeded.float().mean().item()
+
+    # Successful episodes are credited imputed_reward from their success step through
+    # the horizon; failed ones keep their real rewards throughout.
+    horizon = env.call("_max_episode_steps")[0]
+    mask = out["done"] & succeeded
+    imputed_rewards = out["reward"] * ~mask + imputed_reward * mask
+    sum_imputed = (
+        imputed_rewards.sum(dim=1) + imputed_reward * (horizon - imputed_rewards.shape[1])
+    )
+    avg_sum_imputed_reward = sum_imputed.mean().item()
+    print(
+        f"step {step}: success={success_rate:.3f}, "
+        f"avg_sum_imputed_reward={avg_sum_imputed_reward:.2f}"
+    )
 
     if record_n:
         video_dir = Path(out_dir) / "videos"
@@ -39,7 +54,9 @@ def run_eval(
             imgs = out["pixels"][i, :cut].numpy()
             imageio.mimsave(uri=video_dir / f"step{step:06d}_ep{i}.mp4", ims=imgs, fps=fps)
 
-    return dict(success_rate=success_rate)
+    return dict(
+        success_rate=success_rate, avg_sum_imputed_reward=avg_sum_imputed_reward
+    )
 
 
 def train_loop(
