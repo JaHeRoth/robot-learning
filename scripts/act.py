@@ -188,24 +188,24 @@ def evaluating(model: Module):
         model.train(was_training)
 
 
-class ACTPolicy():
+class ACTPolicy(Module):
     def __init__(self, model: ACT, n_action_steps: int, dataset_stats: dict[str, dict[str, Tensor]]):
+        super().__init__()
         self.model = model
         self.n_action_steps = n_action_steps
-        self.dataset_stats = dataset_stats
+        self.register_buffer("state_mean", dataset_stats["observation.state"]["mean"])
+        self.register_buffer("state_std", dataset_stats["observation.state"]["std"])
+        self.register_buffer("action_mean", dataset_stats["action"]["mean"])
+        self.register_buffer("action_std", dataset_stats["action"]["std"])
         self.n_steps_till_action = 0
 
     def reset(self) -> None:
         self.n_steps_till_action = 0
 
-    def _normalize(self, x: Tensor, stats_key: str) -> Tensor:
-        mean = self.dataset_stats[stats_key]["mean"].to(x.device)
-        std = self.dataset_stats[stats_key]["std"].to(x.device)
+    def _normalize(self, x: Tensor, mean: Tensor, std: Tensor) -> Tensor:
         return (x - mean) / std
 
-    def _denormalize(self, x: Tensor, stats_key: str) -> Tensor:
-        mean = self.dataset_stats[stats_key]["mean"].to(x.device)
-        std = self.dataset_stats[stats_key]["std"].to(x.device)
+    def _denormalize(self, x: Tensor, mean: Tensor, std: Tensor) -> Tensor:
         return (x * std) + mean
 
     @torch.no_grad()
@@ -213,12 +213,14 @@ class ACTPolicy():
         if self.n_steps_till_action <= 0:
             img = policy_in["observation.image"].unsqueeze(1)
             proprio = self._normalize(
-                policy_in["observation.state"], stats_key="observation.state"
+                policy_in["observation.state"], self.state_mean, self.state_std
             )
             with evaluating(self.model):
                 chunk_pred = self.model(img=img, proprio=proprio, chunk=None)[0]
-            self.chunk = self._denormalize(chunk_pred, stats_key="action")
+            self.chunk = self._denormalize(chunk_pred, self.action_mean, self.action_std)
             self.n_steps_till_action = self.n_action_steps
 
         self.n_steps_till_action -= 1
         return self.chunk[:, self.n_action_steps - self.n_steps_till_action - 1, :]
+
+    # TODO: Support temporal ensembling
