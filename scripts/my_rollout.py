@@ -8,7 +8,12 @@ from gymnasium.vector import VectorEnv
 
 
 def my_rollout(
-    env: VectorEnv, policy: PreTrainedPolicy, seeds: int | list[int] | None, record_n: int
+    env: VectorEnv,
+    policy: PreTrainedPolicy,
+    seeds: int | list[int] | None,
+    record_n: int,
+    image_key: str,
+    state_key: str,
 ) -> dict[str, torch.Tensor]:
     assert not isinstance(seeds, list) or len(seeds) == env.num_envs
 
@@ -21,12 +26,12 @@ def my_rollout(
     while not done.all():
         policy_in = {
             "observation.image": (
-                (torch.from_numpy(obs["pixels"]).permute(0, 3, 1, 2).contiguous() / 255).to(device)
+                (torch.from_numpy(obs[image_key]).permute(0, 3, 1, 2).contiguous() / 255).to(device)
             ),
-            "observation.state": torch.from_numpy(obs["agent_pos"]).float().to(device),
+            "observation.state": torch.from_numpy(obs[state_key]).float().to(device),
         }
         if record_n:
-            frames.append(obs["pixels"][:record_n])
+            frames.append(obs[image_key][:record_n])
         with torch.no_grad():
             action: torch.Tensor = policy.select_action(policy_in)
         obs, reward, terminated, truncated, info = env.step(action.cpu().numpy())
@@ -60,7 +65,9 @@ def test_my_rollout():
     policy = ACTPolicy.from_pretrained("jaheroth/act_pusht_baseline").to(device)
     seeds = list(range(n_envs))
     expectation = rollout(env, policy, seeds)
-    reality = my_rollout(env, policy, seeds, record_n=2)
+    reality = my_rollout(
+        env, policy, seeds, record_n=2, image_key="pixels", state_key="agent_pos"
+    )
     for k in ["reward", "success", "done"]:
         assert reality[k].allclose(expectation[k]), f"{k} deviates from expectation"
 

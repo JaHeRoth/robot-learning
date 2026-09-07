@@ -40,6 +40,7 @@ def train_act(seed: int = 0):
     n_recorded = 10
     eval_start_seed = 1000
     imputed_reward = 0.95  # PushT's max per-step reward
+    image_key, state_key = "pixels", "agent_pos"
 
     fps = 10
     ds = LeRobotDataset(
@@ -68,6 +69,8 @@ def train_act(seed: int = 0):
         return run_eval(
             env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps,
             imputed_reward=imputed_reward,
+            image_key=image_key,
+            state_key=state_key,
         )
 
     train_loop(
