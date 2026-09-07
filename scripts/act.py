@@ -6,6 +6,7 @@ from torch.nn import Module, Transformer, TransformerEncoder, TransformerEncoder
 from torchvision.models import resnet18, ResNet18_Weights
 from torchvision.ops.misc import FrozenBatchNorm2d
 from torchvision.transforms import Normalize
+from contextlib import contextmanager
 
 
 @dataclass
@@ -175,3 +176,49 @@ class ACT(Module):
         latent_imgs = self.image_encoder(img.flatten(0, 1)).unflatten(0, img.shape[:2])
         next_chunk = self.chunk_decoder(latent_imgs, proprio, z)
         return next_chunk, z_mean, z_logvar
+
+
+@contextmanager
+def evaluating(model: Module):
+    was_training = model.training
+    model.eval()
+    try:
+        yield
+    finally:
+        model.train(was_training)
+
+
+class ACTPolicy():
+    def __init__(self, model: ACT, n_action_steps: int, dataset_stats: dict[str, dict[str, Tensor]]):
+        self.model = model
+        self.n_action_steps = n_action_steps
+        self.dataset_stats = dataset_stats
+        self.n_steps_till_action = 0
+
+    def reset(self) -> None:
+        self.n_steps_till_action = 0
+
+    def _normalize(self, x: Tensor, stats_key: str) -> Tensor:
+        mean = self.dataset_stats[stats_key]["mean"].to(x.device)
+        std = self.dataset_stats[stats_key]["std"].to(x.device)
+        return (x - mean) / std
+
+    def _denormalize(self, x: Tensor, stats_key: str) -> Tensor:
+        mean = self.dataset_stats[stats_key]["mean"].to(x.device)
+        std = self.dataset_stats[stats_key]["std"].to(x.device)
+        return (x * std) + mean
+
+    @torch.no_grad()
+    def select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
+        if self.n_steps_till_action <= 0:
+            img = policy_in["observation.image"].unsqueeze(1)
+            proprio = self._normalize(
+                policy_in["observation.state"], stats_key="observation.state"
+            )
+            with evaluating(self.model):
+                chunk_pred = self.model(img=img, proprio=proprio, chunk=None)[0]
+            self.chunk = self._denormalize(chunk_pred, stats_key="action")
+            self.n_steps_till_action = self.n_action_steps
+
+        self.n_steps_till_action -= 1
+        return self.chunk[:, self.n_action_steps - self.n_steps_till_action - 1, :]
