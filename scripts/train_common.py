@@ -31,14 +31,16 @@ def run_eval(
     succeeded = out["success"].any(dim=1, keepdim=True)
     success_rate = succeeded.float().mean().item()
 
-    # Successful episodes are credited imputed_reward from their success step through
-    # the horizon; failed ones keep their real rewards throughout.
+    # Successful episodes are credited imputed_reward from their success step through the
+    # horizon; failed ones keep only their own real rewards. Steps past an episode's own
+    # end belong to the vector env's auto-reset, so they never count.
     horizon = env.call("_max_episode_steps")[0]
-    mask = out["done"] & succeeded
-    imputed_rewards = out["reward"] * ~mask + imputed_reward * mask
-    sum_imputed = (
-        imputed_rewards.sum(dim=1) + imputed_reward * (horizon - imputed_rewards.shape[1])
-    )
+    ended = out["done"].int().argmax(dim=1, keepdim=True)  # first step this episode ended
+    steps = torch.arange(out["reward"].shape[1])
+    counts_real = (steps < ended) | ((steps == ended) & ~succeeded)
+    sum_imputed = (out["reward"] * counts_real).sum(dim=1) + imputed_reward * (
+        horizon - ended.squeeze(1)
+    ) * succeeded.squeeze(1)
     avg_sum_imputed_reward = sum_imputed.mean().item()
     print(
         f"step {step}: success={success_rate:.3f}, "
