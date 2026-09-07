@@ -9,8 +9,6 @@ from torch import Tensor
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from lerobot.envs.factory import make_env, make_env_config
-
 from scripts.dp import (
     DiffusionModel,
     GenConfig,
@@ -19,6 +17,7 @@ from scripts.dp import (
     denormalize,
     normalize,
 )
+from scripts.tasks import PUSHT, Task
 from scripts.train_common import run_eval, train_loop
 
 
@@ -82,7 +81,7 @@ class LossType(Enum):
     FLOW_MATCHING = "flow_matching"
 
 
-def train_dp(loss_type: LossType, seed: int = 0):
+def train_dp(loss_type: LossType, task: Task, seed: int = 0):
     torch.manual_seed(seed)
 
     chunk_len = 16
@@ -105,12 +104,10 @@ def train_dp(loss_type: LossType, seed: int = 0):
     n_eval_envs = 50
     n_recorded = 10
     eval_start_seed = 1000
-    imputed_reward = 0.95  # PushT's max per-step reward
-    image_key, state_key = "pixels", "agent_pos"
 
-    fps = 10
+    fps = task.fps
     ds = LeRobotDataset(
-        "lerobot/pusht",
+        task.dataset_repo_id,
         delta_timestamps={
             "observation.image": [-1 / fps, 0],
             "observation.state": [-1 / fps, 0],
@@ -148,7 +145,7 @@ def train_dp(loss_type: LossType, seed: int = 0):
         for obj in ["action", "observation.state", "observation.image"]
     }
 
-    env = make_env(make_env_config("pusht"), n_envs=n_eval_envs)
+    env = task.make_env(n_eval_envs)
     eval_seeds = list(range(eval_start_seed, eval_start_seed + n_eval_envs))
     def eval_fn(model, step, out_dir):
         policy = GenPolicy(
@@ -160,9 +157,9 @@ def train_dp(loss_type: LossType, seed: int = 0):
         )
         return run_eval(
             env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps,
-            imputed_reward=imputed_reward,
-            image_key=image_key,
-            state_key=state_key,
+            imputed_reward=task.imputed_reward,
+            image_key=task.image_key,
+            state_key=task.state_key,
         )
 
     train_loop(
@@ -183,4 +180,4 @@ def train_dp(loss_type: LossType, seed: int = 0):
 
 
 if __name__ == "__main__":
-    train_dp(loss_type=LossType.FLOW_MATCHING)
+    train_dp(loss_type=LossType.FLOW_MATCHING, task=PUSHT)
