@@ -189,18 +189,28 @@ def evaluating(model: Module):
 
 
 class ACTPolicy(Module):
-    def __init__(self, model: ACT, n_action_steps: int, dataset_stats: dict[str, dict[str, Tensor]]):
+    def __init__(
+        self,
+        model: ACT,
+        dataset_stats: dict[str, dict[str, Tensor]],
+        n_action_steps: int | None = None,
+        te_factor: float | None = None
+    ):
         super().__init__()
+        assert (n_action_steps is None) ^ (te_factor is None), "Must set n_action_steps XOR te_factor"
         self.model = model
-        self.n_action_steps = n_action_steps
         self.register_buffer("state_mean", dataset_stats["observation.state"]["mean"])
         self.register_buffer("state_std", dataset_stats["observation.state"]["std"])
         self.register_buffer("action_mean", dataset_stats["action"]["mean"])
         self.register_buffer("action_std", dataset_stats["action"]["std"])
+        self.n_action_steps = n_action_steps
+        self.te_factor = te_factor
         self.n_steps_till_action = 0
+        self.active_chunks = deque()
 
     def reset(self) -> None:
         self.n_steps_till_action = 0
+        self.active_chunks = deque()
 
     def _normalize(self, x: Tensor, mean: Tensor, std: Tensor) -> Tensor:
         return (x - mean) / std
@@ -208,19 +218,41 @@ class ACTPolicy(Module):
     def _denormalize(self, x: Tensor, mean: Tensor, std: Tensor) -> Tensor:
         return (x * std) + mean
 
-    @torch.no_grad()
-    def select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
+    def _compute_next_chunk(self, policy_in: dict[str, Tensor]) -> Tensor:
+        img = policy_in["observation.image"].unsqueeze(1)
+        proprio = self._normalize(
+            policy_in["observation.state"], self.state_mean, self.state_std
+        )
+        with evaluating(self.model):
+            chunk_pred = self.model(img=img, proprio=proprio, chunk=None)[0]
+        return self._denormalize(chunk_pred, self.action_mean, self.action_std)
+
+    def _no_te_select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
         if self.n_steps_till_action <= 0:
-            img = policy_in["observation.image"].unsqueeze(1)
-            proprio = self._normalize(
-                policy_in["observation.state"], self.state_mean, self.state_std
-            )
-            with evaluating(self.model):
-                chunk_pred = self.model(img=img, proprio=proprio, chunk=None)[0]
-            self.chunk = self._denormalize(chunk_pred, self.action_mean, self.action_std)
+            self.chunk = self._compute_next_chunk(policy_in)
             self.n_steps_till_action = self.n_action_steps
 
         self.n_steps_till_action -= 1
         return self.chunk[:, self.n_action_steps - self.n_steps_till_action - 1, :]
 
-    # TODO: Support temporal ensembling
+    def _te_select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
+        chunk = self._compute_next_chunk(policy_in)
+        if len(self.active_chunks) >= chunk.size(1):
+            self.active_chunks.popleft()
+        self.active_chunks.append(chunk)
+        n_active = len(self.active_chunks)
+        factors = (
+            self.te_factor ** (torch.arange(n_active) != (n_active - 1))
+            * (1 - self.te_factor) ** torch.arange(n_active)
+        )
+        actions = [
+            chunk[:, n_active - 1 - i, :]
+            for i, chunk in enumerate(self.active_chunks)
+        ]
+        return torch.stack(actions, dim=-1) @ factors
+
+    @torch.no_grad()
+    def select_action(self, policy_in: dict[str, Tensor]) -> Tensor:
+        if self.te_factor is None:
+            return self._no_te_select_action(policy_in)
+        return self._te_select_action(policy_in)
