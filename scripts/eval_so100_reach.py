@@ -14,14 +14,13 @@ from scripts.generate_so100_reach_data import sample_q_init_and_target, generate
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class SO100Reach(Env):
-    def __init__(self, seed: int, mjmodel: MjModel, mjdata: MjData):
+    def __init__(self, mjmodel: MjModel, seed: int):
         super().__init__()
         imgshape = (96, 96, 3)
         fps = 25
 
-        self.rng = np.random.default_rng(seed)
         self.mjmodel = mjmodel
-        self.mjdata = mjdata
+        self.mjdata = mujoco.MjData(mjmodel)
         self.renderer = mujoco.Renderer(mjmodel, height=imgshape[0], width=imgshape[1])
         self.observation_space = spaces.Dict({
             "observation.image": spaces.Box(low=0, high=255, shape=imgshape, dtype=np.uint8),
@@ -39,6 +38,7 @@ class SO100Reach(Env):
         self.distance_threshold = float(mjmodel.geom_size[geom_id][0])  # 0.02
         self.n_within_threshold = 10  # Matches linger on target in dataset
         self.n_within = 0
+        self.reset(seed)
 
     def _capture_obs(self):
         mujoco.mj_forward(self.mjmodel, self.mjdata)
@@ -52,10 +52,10 @@ class SO100Reach(Env):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         mujoco.mj_resetData(self.mjmodel, self.mjdata)
-        q_init, self.q_target = sample_q_init_and_target(
+        self.q_init, self.q_target = sample_q_init_and_target(
             self.rng, self.mjmodel, self.mjdata, self.renderer
         )
-        self.mjdata.qpos = q_init.copy()
+        self.mjdata.qpos = self.q_init.copy()
         self.n_within = 0
         return self._capture_obs(), {}
 
@@ -77,3 +77,25 @@ class SO100Reach(Env):
         truncated = False  # TimeLimit wrapper owns this
         info = {"is_success": terminated}
         return obs, reward, terminated, truncated, info
+
+
+def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:
+    horizon = 150
+    mjmodel = mujoco.MjModel.from_xml_path(
+        str(REPO_ROOT / "scenes/so100_reach/scene.xml")
+    )
+    env = SO100Reach(mjmodel=mjmodel, seed=0)
+    avg_imputed_sum_reward = 0.0
+    success_rate = 0.0
+    for seed in seeds:
+        env.reset(seed)
+        ctrl_steps = np.random.default_rng(seed).integers(low=50, high=100)
+        for i in range(horizon):
+            frac = min((i + 1) / ctrl_steps, 1.0)
+            action = env.q_init + frac * (env.q_target - env.q_init)
+            _, reward, terminated, _, _ = env.step(action)
+            avg_imputed_sum_reward += reward / len(seeds)
+        success_rate += terminated / len(seeds)
+    print(f"{avg_imputed_sum_reward=}")
+    print(f"{success_rate=}")
+    return avg_imputed_sum_reward, success_rate
