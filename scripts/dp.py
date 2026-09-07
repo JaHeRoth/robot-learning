@@ -22,15 +22,12 @@ class DPConfig:
         return 2 * self.n_keypoints  # Two coordinates per keypoint
 
 
-def _make_sequence_pos_embedding(length: int, dim: int):
+def _time_embedding(t: Tensor, dim: int, max_freq: float):
+    """t.shape = (B,). 0 <= t <= 1"""
     assert dim % 2 == 0
-    T = 10000
-    w = 1 / T ** (2 * torch.arange(dim // 2) / dim)
-    embeddings = [
-        torch.stack([(i * w).sin(), (i * w).cos()]).permute(1, 0).flatten()
-        for i in range(length)
-    ]
-    return torch.stack(embeddings)
+    w = max_freq ** (1 - 2 * torch.arange(dim // 2, device=t.device) / dim)
+    tw = (t.unsqueeze(1) * w.unsqueeze(0))  # (B, dim // 2)
+    return torch.stack([tw.sin(), tw.cos()], dim=-1).flatten(start_dim=1)
 
 
 class ResBlock(Module):
@@ -144,10 +141,8 @@ class UNet(Module):
 class Denoiser(Module):
     def __init__(self, config: DPConfig):
         super().__init__()
-        self.register_buffer(
-            "k_table",
-            _make_sequence_pos_embedding(length=config.max_k + 1, dim=config.dim_k_encoding),
-        )
+        self.dim_k_encoding = config.dim_k_encoding
+        self.max_k = config.max_k
         self.k_encoder = Sequential(
             Linear(config.dim_k_encoding, 512),
             Mish(),
@@ -164,7 +159,9 @@ class Denoiser(Module):
         k: Tensor,  # (B,)
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
-        k_encoding = self.k_encoder(self.k_table[k])
+        k_encoding = self.k_encoder(
+            _time_embedding(t=k / self.max_k, dim=self.dim_k_encoding, max_freq=self.max_k)
+        )
         conditioner = torch.cat(
             [img_encoding, proprio.flatten(start_dim=1), k_encoding],
             dim=-1,
