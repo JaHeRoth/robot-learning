@@ -38,6 +38,7 @@ def train_act(seed: int = 0):
     eval_every = 10_000
     n_eval_envs = 50
     n_recorded = 10
+    eval_start_seed = 1000
 
     fps = 10
     ds = LeRobotDataset(
@@ -60,7 +61,7 @@ def train_act(seed: int = 0):
     }
 
     env = make_env(make_env_config("pusht"), n_envs=n_eval_envs)
-    eval_seeds = list(range(1000, 1000 + n_eval_envs))
+    eval_seeds = list(range(eval_start_seed, eval_start_seed + n_eval_envs))
     def eval_fn(model, step, out_dir):
         policy = ACTPolicy(model, dataset_stats=stats, n_action_steps=n_action_steps)
         return run_eval(

@@ -1,4 +1,5 @@
 from enum import Enum
+from functools import partial
 
 import diffusers
 import torch
@@ -8,14 +9,17 @@ from torch import Tensor
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
+from lerobot.envs.factory import make_env, make_env_config
+
 from scripts.dp import (
     DiffusionModel,
     GenConfig,
+    GenPolicy,
     FlowMatchingModel,
     denormalize,
     normalize,
 )
-from scripts.train_common import train_loop
+from scripts.train_common import run_eval, train_loop
 
 
 def _normalize(x: Tensor, stats: dict) -> Tensor:
@@ -28,8 +32,8 @@ def _denormalize(x: Tensor, stats: dict) -> Tensor:
 
 def random_crop(
     imgs: Tensor,  # (B, n_obs, n_channels, height, width)
+    crop: int,
     full = 96,  # Assuming squared images
-    crop = 84,
 ):
     start_row = torch.randint(low=0, high=full - crop + 1, size=imgs.shape[0:1])
     start_col = torch.randint(low=0, high=full - crop + 1, size=imgs.shape[0:1])
@@ -41,8 +45,8 @@ def random_crop(
     )
 
 
-def dp_loss(model, batch, stats):
-    imgs = random_crop(batch["observation.image"]).cuda()
+def dp_loss(model, batch, stats, crop):
+    imgs = random_crop(batch["observation.image"], crop=crop).cuda()
     proprios = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
     chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
     loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
@@ -59,8 +63,8 @@ def dp_loss(model, batch, stats):
     return ((noise_pred - noise).pow(2) * loss_mask).mean()
 
 
-def fmp_loss(model, batch, stats):
-    imgs = random_crop(batch["observation.image"]).cuda()
+def fmp_loss(model, batch, stats, crop):
+    imgs = random_crop(batch["observation.image"], crop=crop).cuda()
     proprios = _normalize(batch["observation.state"].cuda(), stats=stats["observation.state"])
     chunk = _normalize(batch["action"].cuda(), stats=stats["action"])
     loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
@@ -93,6 +97,14 @@ def train_dp(loss_type: LossType, seed: int = 0):
 
     num_batches = 100_000
     drop_n_last_frames = 7
+    crop = 84
+
+    n_action_steps = 8
+    n_steps = 10  # DDIM steps for DP, Euler steps for FMP
+    eval_every = 10_000
+    n_eval_envs = 50
+    n_recorded = 10
+    eval_start_seed = 1000
 
     fps = 10
     ds = LeRobotDataset(
@@ -134,18 +146,34 @@ def train_dp(loss_type: LossType, seed: int = 0):
         for obj in ["action", "observation.state", "observation.image"]
     }
 
+    env = make_env(make_env_config("pusht"), n_envs=n_eval_envs)
+    eval_seeds = list(range(eval_start_seed, eval_start_seed + n_eval_envs))
+    def eval_fn(model, step, out_dir):
+        policy = GenPolicy(
+            model,
+            dataset_stats=stats,
+            n_action_steps=n_action_steps,
+            crop=crop,
+            n_steps=n_steps,
+        )
+        return run_eval(
+            env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps
+        )
+
     train_loop(
         model=model,
         loader=loader,
         opt=opt,
         sched=sched,
-        loss_fn=loss_fn,
+        loss_fn=partial(loss_fn, crop=crop),
         stats=stats,
         num_batches=num_batches,
         out_dir=out_dir,
         ema_decay=ema_decay,
         grad_clip_at=grad_clip_at,
         checkpoint_extra={"model_config": config},
+        eval_every=eval_every,
+        eval_fn=eval_fn,
     )
 
 
