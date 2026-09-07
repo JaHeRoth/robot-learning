@@ -33,9 +33,8 @@ def random_crop(
     )
 
 
-def my_train(seed: int | None = None):
-    if seed is not None:
-        torch.manual_seed(seed)
+def train(seed: int = 0):
+    torch.manual_seed(seed)
 
     chunk_len = 16
     batch_size = 64
@@ -114,4 +113,4 @@ def my_train(seed: int | None = None):
 
 
 if __name__ == "__main__":
-    my_train(seed=0)
+    train()

@@ -7,7 +7,9 @@ from scripts.act import ACT
 from scripts.train_common import train_loop
 
 
-def my_train():
+def train(seed: int = 0):
+    torch.manual_seed(seed)
+
     chunk_len = 100
     batch_size = 64
     lr = 2e-5
@@ -16,8 +18,6 @@ def my_train():
     grad_clip_at = 10.0
 
     num_batches = 100_000
-
-    torch.manual_seed(1000)
 
     fps = 10
     ds = LeRobotDataset(
@@ -65,4 +65,4 @@ def my_train():
 
 
 if __name__ == "__main__":
-    my_train()
+    train()
