@@ -9,7 +9,7 @@ from torch.nn import functional as F
 
 
 @dataclass(frozen=True)
-class DPConfig:
+class GenConfig:
     max_k: int = 100
     chunk_len: int = 48
     n_obs: int = 2
@@ -21,6 +21,9 @@ class DPConfig:
     @property
     def latent_img_depth(self) -> int:
         return 2 * self.n_keypoints  # Two coordinates per keypoint
+
+
+DPConfig = GenConfig  # Old checkpoints pickled this name
 
 
 def _time_embedding(t: Tensor, dim: int):
@@ -79,7 +82,7 @@ class ConditionedSequential(Module):
 
 
 class UNet(Module):
-    def __init__(self, config: DPConfig, cond_dim: int):
+    def __init__(self, config: GenConfig, cond_dim: int):
         super().__init__()
         self.down1 = ConditionedSequential(
             ResBlock(cond_dim=cond_dim, in_channels=config.proprio_dim, out_channels=512),
@@ -140,7 +143,7 @@ class UNet(Module):
 
 
 class Denoiser(Module):
-    def __init__(self, config: DPConfig):
+    def __init__(self, config: GenConfig):
         super().__init__()
         self.dim_t_encoding = config.dim_t_encoding
         self.t_encoder = Sequential(
@@ -190,7 +193,7 @@ class SpatialSoftmax(Module):
 
 
 class ImgsEncoder(Module):
-    def __init__(self, config: DPConfig):
+    def __init__(self, config: GenConfig):
         super().__init__()
         self.like_lerobot = config.like_lerobot
         self.trunk = Sequential(
@@ -231,8 +234,8 @@ def _prev(x: Tensor, fill_val: float = 1.0) -> Tensor:
 
 
 
-class DiffusionPolicy(Module):
-    def __init__(self, config: DPConfig):
+class DiffusionModel(Module):
+    def __init__(self, config: GenConfig):
         super().__init__()
         self.config = config
         self.imgs_encoder = ImgsEncoder(config)
@@ -314,8 +317,8 @@ class DiffusionPolicy(Module):
         return chunk
 
 
-class FlowMatchingPolicy(Module):
-    def __init__(self, config: DPConfig):
+class FlowMatchingModel(Module):
+    def __init__(self, config: GenConfig):
         super().__init__()
         self.config = config
         self.imgs_encoder = ImgsEncoder(config)
@@ -371,15 +374,15 @@ def center_crop(imgs: Tensor, crop: int) -> Tensor:
 class GenPolicy(Module):
     def __init__(
         self,
-        model: DiffusionPolicy | FlowMatchingPolicy,
+        model: DiffusionModel | FlowMatchingModel,
         dataset_stats: dict[str, dict[str, Tensor]],
         n_action_steps: int,
         crop: int,  # center-crop side length, matching the random crop used in training
         n_steps: int | None,
     ):
         super().__init__()
-        assert n_steps is not None or isinstance(model, DiffusionPolicy), (
-            "n_steps cannot be None for FlowMatchingPolicy"
+        assert n_steps is not None or isinstance(model, DiffusionModel), (
+            "n_steps cannot be None for FlowMatchingModel"
         )
         self.model = model
         self.crop = crop

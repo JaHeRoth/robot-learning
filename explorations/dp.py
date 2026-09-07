@@ -1,6 +1,6 @@
 # %%
 import torch
-from scripts.dp import DiffusionPolicy, DPConfig
+from scripts.dp import DiffusionModel, GenConfig
 
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d
@@ -18,8 +18,8 @@ proprios = torch.randn(batch_size, n_obs, proprio_dim)
 k = torch.randint(low=1, high=max_k + 1, size=(batch_size,))
 chunk = torch.randn(batch_size, chunk_len, proprio_dim)
 
-dp_config = DPConfig(max_k=max_k, chunk_len=chunk_len)
-dp = DiffusionPolicy(dp_config)
+dp_config = GenConfig(max_k=max_k, chunk_len=chunk_len)
+dp = DiffusionModel(dp_config)
 
 # %%
 # Checksum test
@@ -45,7 +45,7 @@ assert ddim_chunk.shape == chunk.shape, "Wrong output dimension"
 
 # %%
 # Gradient flow test
-dp = DiffusionPolicy(DPConfig(max_k=max_k, chunk_len=chunk_len))
+dp = DiffusionModel(GenConfig(max_k=max_k, chunk_len=chunk_len))
 eps_hat = dp(imgs, proprios, k, chunk)
 dp.zero_grad()
 loss = eps_hat.abs().mean()
@@ -81,7 +81,7 @@ proprios = (proprios - proprios.mean(axis=0)) / proprios.std(axis=0)
 chunk = batch["action"].cuda()
 chunk = (chunk - chunk.mean(axis=0)) / chunk.std(axis=0)
 
-dp = DiffusionPolicy(DPConfig(proprio_dim=2)).cuda()
+dp = DiffusionModel(GenConfig(proprio_dim=2)).cuda()
 opt = AdamW(dp.parameters(), lr=1e-4)
 noise = torch.randn_like(chunk)
 k = torch.randint(low=1, high=101, size=(B,), device="cuda")

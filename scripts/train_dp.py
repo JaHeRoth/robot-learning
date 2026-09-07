@@ -9,9 +9,9 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
 from scripts.dp import (
-    DiffusionPolicy,
-    DPConfig,
-    FlowMatchingPolicy,
+    DiffusionModel,
+    GenConfig,
+    FlowMatchingModel,
     denormalize,
     normalize,
 )
@@ -108,18 +108,18 @@ def train_dp(loss_type: LossType, seed: int = 0):
     )
     loader = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=4)
 
-    config = DPConfig(
+    config = GenConfig(
         proprio_dim=ds.meta.features["observation.state"]["shape"][0],
         chunk_len=chunk_len,
     )
     if loss_type == LossType.DIFFUSION:
         loss_fn = dp_loss
         out_dir = "outputs/my_dp"
-        model = DiffusionPolicy(config).cuda()
+        model = DiffusionModel(config).cuda()
     else:
         loss_fn = fmp_loss
         out_dir = "outputs/my_fmp"
-        model = FlowMatchingPolicy(config).cuda()
+        model = FlowMatchingModel(config).cuda()
 
     opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=adam_betas)
     sched = diffusers.optimization.get_scheduler("cosine", opt, num_warmup_steps=adam_warmup, num_training_steps=num_batches)
