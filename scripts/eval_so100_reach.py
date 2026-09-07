@@ -85,6 +85,7 @@ def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:
         str(REPO_ROOT / "scenes/so100_reach/scene.xml")
     )
     env = SO100Reach(mjmodel=mjmodel, seed=0)
+    imputed_reward = -env.distance_threshold  # Credited per step from success onward
     avg_imputed_sum_reward = 0.0
     success_rate = 0.0
     for seed in seeds:
@@ -94,8 +95,11 @@ def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:
             frac = min((i + 1) / ctrl_steps, 1.0)
             action = env.q_init + frac * (env.q_target - env.q_init)
             _, reward, terminated, _, _ = env.step(action)
+            if terminated:  # This step onward is imputed, not real
+                avg_imputed_sum_reward += imputed_reward * (horizon - i) / len(seeds)
+                success_rate += 1 / len(seeds)
+                break
             avg_imputed_sum_reward += reward / len(seeds)
-        success_rate += terminated / len(seeds)
     print(f"{avg_imputed_sum_reward=}")
     print(f"{success_rate=}")
     return avg_imputed_sum_reward, success_rate
