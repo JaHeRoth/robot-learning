@@ -8,7 +8,7 @@ from gymnasium.vector import VectorEnv
 
 
 def my_rollout(
-    env: VectorEnv, policy: PreTrainedPolicy, seeds: int | list[int] | None
+    env: VectorEnv, policy: PreTrainedPolicy, seeds: int | list[int] | None, record_n: int = 0
 ) -> dict[str, torch.Tensor]:
     assert not isinstance(seeds, list) or len(seeds) == env.num_envs
 
@@ -16,7 +16,7 @@ def my_rollout(
     obs, info = env.reset(seed=seeds)
     policy.reset()
 
-    rewards, successes, dones = [], [], []
+    rewards, successes, dones, frames = [], [], [], []
     done = np.zeros(env.num_envs, dtype=bool)
     while not done.all():
         policy_in = {
@@ -25,6 +25,8 @@ def my_rollout(
             ),
             "observation.state": torch.from_numpy(obs["agent_pos"]).float().to(device),
         }
+        if record_n:
+            frames.append(obs["pixels"][:record_n])
         with torch.no_grad():
             action: torch.Tensor = policy.select_action(policy_in)
         obs, reward, terminated, truncated, info = env.step(action.cpu().numpy())
@@ -43,6 +45,7 @@ def my_rollout(
         "reward": torch.from_numpy(np.stack(rewards, axis=1)),
         "success": torch.from_numpy(np.stack(successes, axis=1)),
         "done": torch.from_numpy(np.stack(dones, axis=1)),
+        "pixels": torch.from_numpy(np.stack(frames, axis=1)) if record_n else None,
     }
 
 

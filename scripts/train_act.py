@@ -26,18 +26,6 @@ def act_loss(model, batch, stats, kl_weight):
     return l1_loss + kl_weight * kl_loss
 
 
-def eval_act(env: VectorEnv, policy: ACTPolicy, eval_seeds: list[int], step: int, n_recorded: int):
-    out = my_rollout(env, policy, eval_seeds)
-    success_rate = out["success"].any(dim=1).float().mean()
-    print(f"step {step}: success={success_rate:.3f}")
-
-    for i in range(n_recorded):
-        done_i = out["done"][i].argmax()
-        imageio.mimsave(uri=TODO, imgs=out["pixels"][:done_i], fps=10)
-
-    return dict(success_rate=success_rate)
-
-
 def train_act(seed: int = 0):
     torch.manual_seed(seed)
 

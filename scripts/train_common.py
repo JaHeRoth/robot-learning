@@ -12,6 +12,22 @@ from matplotlib import pyplot as plt
 from torch.nn.utils import clip_grad_norm_
 
 
+def run_eval(env: VectorEnv, policy: ACTPolicy, eval_seeds: list[int], step: int, record_n: int):
+    out = my_rollout(env, policy, eval_seeds)
+    success_rate = out["success"].any(dim=1).float().mean()
+    print(f"step {step}: success={success_rate:.3f}")
+
+    for i in range(record_n):
+        if out["done"][i].any():
+            imgs = out["pixels"][i, :out["done"][i].int().argmax() + 1]
+        else:
+            imgs = out["pixels"][i]
+        uri = video_dir / f"step{step:06d}_ep{i}.mp4"
+        imageio.mimsave(uri=uri, imgs=imgs, fps=10)
+
+    return dict(success_rate=success_rate)
+
+
 def train_loop(
     *,
     model,
