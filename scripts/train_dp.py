@@ -1,3 +1,4 @@
+import os
 from enum import Enum
 from functools import partial
 
@@ -121,7 +122,16 @@ def train_dp(
     sampler = EpisodeAwareSampler(
         episode_data_index=ds.episode_data_index, drop_n_last_frames=drop_n_last_frames, shuffle=True
     )
-    loader = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=4)
+    cpu_count = os.cpu_count() or 4
+    loader = DataLoader(
+        ds,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=min(24, max(2, cpu_count - 4)),  # Leave some cores for other stuff
+        persistent_workers=True,  # Cut overhead
+        prefetch_factor=4,  # Avoid sometimes starving
+        pin_memory=True,
+    )
 
     config = GenConfig(
         proprio_dim=ds.meta.features["observation.state"]["shape"][0],

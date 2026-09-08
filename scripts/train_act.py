@@ -1,3 +1,4 @@
+import os
 from functools import partial
 
 import torch
@@ -45,7 +46,16 @@ def train_act(
         task.dataset_repo_id,
         delta_timestamps={"action": [i / fps for i in range(chunk_len)]}
     )
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4)
+    cpu_count = os.cpu_count() or 4
+    loader = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=min(24, max(2, cpu_count - 4)),  # Leave some cores for other stuff
+        persistent_workers=True,  # Cut overhead
+        prefetch_factor=4,  # Avoid sometimes starving
+        pin_memory=True,
+    )
 
     model = ACT(action_dim=ds.meta.features["action"]["shape"][0], chunk_len=chunk_len).cuda()
     opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
