@@ -110,7 +110,7 @@ def train_dp(
     eval_every = 10_000
     n_eval_envs = 50
     n_recorded = 10
-    eval_start_seed = 1000
+    eval_start_seed = 800_000
 
     fps = task.fps
     ds = LeRobotDataset(
