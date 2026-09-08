@@ -35,3 +35,5 @@ SO100_REACH = Task(
     state_key="observation.state",
     imputed_reward=-0.02,  # Success threshold: tip inside the target cube
 )
+
+TASKS = {"pusht": PUSHT, "so100_reach": SO100_REACH}

@@ -6,7 +6,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
 from scripts.act import ACT, ACTPolicy
-from scripts.tasks import PUSHT, Task
+from scripts.tasks import Task
 from scripts.train_common import run_eval, train_loop
 
 
@@ -83,7 +83,3 @@ def train_act(
         eval_every=eval_every,
         eval_fn=eval_fn,
     )
-
-
-if __name__ == "__main__":
-    train_act(task=PUSHT)

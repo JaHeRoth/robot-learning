@@ -17,7 +17,7 @@ from scripts.dp import (
     denormalize,
     normalize,
 )
-from scripts.tasks import PUSHT, Task
+from scripts.tasks import Task
 from scripts.train_common import run_eval, train_loop
 
 
@@ -81,10 +81,15 @@ class LossType(Enum):
     FLOW_MATCHING = "flow_matching"
 
 
-def train_dp(loss_type: LossType, task: Task, seed: int = 0):
+def train_dp(
+    loss_type: LossType,
+    task: Task,
+    chunk_len: int = 16,
+    n_action_steps: int = 8,
+    seed: int = 0,
+):
     torch.manual_seed(seed)
 
-    chunk_len = 16
     batch_size = 64
     ema_decay = 0.999
 
@@ -98,7 +103,6 @@ def train_dp(loss_type: LossType, task: Task, seed: int = 0):
     drop_n_last_frames = 7
     crop = 84
 
-    n_action_steps = 8
     n_steps = 10  # DDIM steps for DP, Euler steps for FMP
     eval_every = 10_000
     n_eval_envs = 50
@@ -177,7 +181,3 @@ def train_dp(loss_type: LossType, task: Task, seed: int = 0):
         eval_every=eval_every,
         eval_fn=eval_fn,
     )
-
-
-if __name__ == "__main__":
-    train_dp(loss_type=LossType.FLOW_MATCHING, task=PUSHT)
