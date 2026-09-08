@@ -1,10 +1,11 @@
 """Everything that differs between the environments the policies are trained on."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from gymnasium.vector import VectorEnv
 from lerobot.envs.factory import make_env, make_env_config
 
+from scripts.eval_so100_flip import make_so100_flip_env
 from scripts.eval_so100_reach import make_so100_env
 
 
@@ -36,4 +37,20 @@ SO100_REACH = Task(
     imputed_reward=-0.02,  # Success threshold: tip inside the target cube
 )
 
-TASKS = {"pusht": PUSHT, "so100_reach": SO100_REACH}
+SO100_FLIP = Task(
+    dataset_repo_id="jaheroth/so100_flip",
+    make_env=lambda n_envs: make_so100_flip_env(n_envs=n_envs, horizon=300),
+    fps=25,
+    image_key="observation.image",
+    state_key="observation.state",
+    imputed_reward=-0.012,  # 0.012 is expert's mean distance from target on success
+)
+
+SO100_FLIP_100 = replace(SO100_FLIP, dataset_repo_id="jaheroth/so100_flip_100")
+
+TASKS = {
+    "pusht": PUSHT,
+    "so100_reach": SO100_REACH,
+    "so100_flip": SO100_FLIP,
+    "so100_flip_100": SO100_FLIP_100,
+}
