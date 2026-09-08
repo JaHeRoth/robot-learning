@@ -126,6 +126,8 @@ def train_loop(
                 model.eval()
                 with torch.no_grad():
                     eval_history.append((step, eval_fn(model, step, out_dir)))
+                with open(out_dir / "eval_history.json", "w") as f:
+                    json.dump(eval_history, f, indent=2)
                 model.train()
 
             if step % checkpoint_every == 0:
@@ -143,9 +145,6 @@ def train_loop(
 
     np.save(out_dir / "losses.npy", losses)
     np.save(out_dir / "avg_losses.npy", avg_losses)
-    if eval_history:
-        with open(out_dir / "eval_history.json", "w") as f:
-            json.dump(eval_history, f, indent=2)
     plt.plot(range(log_every, len(avg_losses) * log_every + 1, log_every), avg_losses)
     plt.xlabel("Step")
     plt.ylabel("Training loss")
