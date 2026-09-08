@@ -81,7 +81,8 @@ def make_so100_env(n_envs: int, horizon: int) -> AsyncVectorEnv:
     def thunk():
         mjmodel = mujoco.MjModel.from_xml_path(model_path)
         return TimeLimit(SO100Reach(mjmodel), max_episode_steps=horizon)
-    return AsyncVectorEnv([thunk for _ in range(n_envs)])
+    # spawn, not fork: a forked child inherits a broken GL context and deadlocks
+    return AsyncVectorEnv([thunk for _ in range(n_envs)], context="spawn")
 
 
 def eval_experts(seeds: Iterable[int]) -> tuple[float, float]:

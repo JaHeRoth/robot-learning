@@ -23,10 +23,11 @@ def act_loss(model, batch, stats, kl_weight):
     return l1_loss + kl_weight * kl_loss
 
 
-def train_act(task: Task, seed: int = 0):
+def train_act(
+    task: Task, chunk_len: int = 100, n_action_steps: int = 16, seed: int = 0
+):
     torch.manual_seed(seed)
 
-    chunk_len = 100
     batch_size = 64
     lr = 2e-5
     weight_decay = 1e-4
@@ -34,7 +35,6 @@ def train_act(task: Task, seed: int = 0):
     grad_clip_at = 10.0
 
     num_batches = 100_000
-    n_action_steps = 16
     eval_every = 10_000
     n_eval_envs = 50
     n_recorded = 10
