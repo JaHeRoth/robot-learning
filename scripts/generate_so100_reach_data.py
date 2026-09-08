@@ -4,6 +4,7 @@ Samples reachable goal poses (with rejection filtering), places the goal cube
 at the target fingertip position, records interpolated reach trajectories at
 25 Hz into a LeRobotDataset.
 """
+import argparse
 from pathlib import Path
 from time import time
 
@@ -107,14 +108,12 @@ def generate_expert_trajectory(
     dataset.save_episode()
 
 
-def generate_expert_data() -> LeRobotDataset:
-    num_episodes = 100
+def generate_expert_data(num_episodes: int = 1000) -> LeRobotDataset:
     model = mujoco.MjModel.from_xml_path(
         str(REPO_ROOT / "scenes/so100_reach/scene.xml")
     )
     data = mujoco.MjData(model)
     renderer = mujoco.Renderer(model, height=96, width=96)
-    rng = np.random.default_rng(seed=0)
 
     joint_names = [model.joint(i).name for i in range(model.njnt)]
     dataset = LeRobotDataset.create(
@@ -140,13 +139,17 @@ def generate_expert_data() -> LeRobotDataset:
         root=REPO_ROOT / f"outputs/so100_reach_{int(time())}",
     )
 
-    for _ in tqdm(range(num_episodes)):
+    for i in tqdm(range(num_episodes)):
         generate_expert_trajectory(
-            rng, model, data, renderer, dataset, task="Reach the red cube"
+            np.random.default_rng(seed=i),
+            model, data, renderer, dataset, task="Reach the red cube",
         )
     return dataset
 
 
 if __name__ == "__main__":
-    dataset = generate_expert_data()
+    p = argparse.ArgumentParser()
+    p.add_argument("--episodes", type=int, default=1000)
+    args = p.parse_args()
+    dataset = generate_expert_data(num_episodes=args.episodes)
     print(f"done: {dataset.num_episodes} episodes at {dataset.root}")
