@@ -347,7 +347,7 @@ class FlowMatchingModel(Module):
             proprios.size(0), self.config.chunk_len, proprios.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        ts = torch.linspace(start=0, end=1, steps=n_steps + 1)[:0:-1].tolist()
+        ts = torch.linspace(start=0, end=1, steps=n_steps + 1).tolist()[:0:-1]
         for t in ts:
             t_tensor = torch.full(
                 size=(len(imgs),), fill_value=t, device=device
