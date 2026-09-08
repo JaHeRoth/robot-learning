@@ -6,3 +6,13 @@ All code here is written by me, with one exception: [scripts/box/](scripts/box) 
 ## Setup note (macOS)
 
 Create a `.env` file in the repo root containing `KMP_DUPLICATE_LIB_OK=TRUE` (duplicate OpenMP runtimes from the torch wheel + conda ffmpeg; terminals get it via pixi automatically, this covers VS Code notebook kernels).
+
+## Setup note (headless Linux)
+
+MuJoCo rendering (so100_reach) needs software GL, which conda-forge no longer ships:
+
+```
+sudo apt install libosmesa6
+```
+
+pixi sets `MUJOCO_GL=osmesa` for you. Without the above, rendering fails, and `AsyncVectorEnv` hangs at construction rather than raising.

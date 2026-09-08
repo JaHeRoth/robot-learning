@@ -26,10 +26,7 @@ polars = ">=1.44.1,<2"
 lerobot = { version = ">=0.3.3, <0.4", extras = ["pusht", "feetech"] }
 mujoco = ">=3.12.0, <4"
 
-# Headless MuJoCo rendering. macOS renders through CGL, but a Linux box has no
-# display and (on compute-only NVIDIA images) no EGL, so it needs software GL.
-[target.linux-64.dependencies]
-mesalib = ">=24"
-
+# Headless boxes have no display and (on compute-only NVIDIA images) no EGL, so
+# MuJoCo falls back to software GL. See README for the system package it needs.
 [target.linux-64.activation.env]
 MUJOCO_GL = "osmesa"
