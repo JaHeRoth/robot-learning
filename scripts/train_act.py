@@ -1,5 +1,6 @@
 import os
 from functools import partial
+from pathlib import Path
 
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -25,7 +26,11 @@ def act_loss(model, batch, stats, kl_weight):
 
 
 def train_act(
-    task: Task, chunk_len: int = 100, n_action_steps: int = 16, seed: int = 0
+    task: Task,
+    chunk_len: int = 100,
+    n_action_steps: int = 16,
+    seed: int = 0,
+    resume_from: Path | None = None,
 ):
     torch.manual_seed(seed)
 
@@ -92,4 +97,5 @@ def train_act(
         grad_clip_at=grad_clip_at,
         eval_every=eval_every,
         eval_fn=eval_fn,
+        resume_from=resume_from,
     )

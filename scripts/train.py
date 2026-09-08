@@ -3,6 +3,7 @@
     python -m scripts.train --method act --task so100_reach --chunk-len 50
 """
 import argparse
+from pathlib import Path
 
 from scripts.tasks import TASKS
 from scripts.train_act import train_act
@@ -16,10 +17,11 @@ if __name__ == "__main__":  # Guard is required: AsyncVectorEnv re-imports this 
     # None = the method's own default
     p.add_argument("--chunk-len", type=int)
     p.add_argument("--n-action-steps", type=int)
+    p.add_argument("--resume-from", type=Path)
     args = p.parse_args()
 
     kwargs = {"task": TASKS[args.task], "seed": args.seed}
-    for name in ["chunk_len", "n_action_steps"]:
+    for name in ["chunk_len", "n_action_steps", "resume_from"]:
         if getattr(args, name) is not None:
             kwargs[name] = getattr(args, name)
 

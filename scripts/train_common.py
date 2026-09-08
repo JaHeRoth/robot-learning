@@ -82,6 +82,7 @@ def train_loop(
     checkpoint_extra: dict | None = None,  # static entries merged into every checkpoint
     eval_every: int | None = None,
     eval_fn=None,  # (model, step, out_dir) -> dict, called every eval_every steps
+    resume_from: Path | None = None,
 ):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +96,23 @@ def train_loop(
     eval_history = []
     rolling_avg_loss = 0.0
     step = 1
+
+    if resume_from:
+        step = int(resume_from.stem.split("_")[-1]) + 1
+        if later := [p for p in out_dir.glob("step_*.pt") if int(p.stem.split("_")[-1]) >= step]:
+            raise FileExistsError(f"{out_dir} already has checkpoints past {resume_from.name}: {later}")
+        if (eval_history_path := resume_from.parent / "eval_history.json").exists():
+            with open(eval_history_path, "r") as f:
+                eval_history = [e for e in json.load(f) if e[0] < step]
+        ckpt = torch.load(resume_from, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        opt.load_state_dict(ckpt["opt_state"])
+        if "ema_state" in ckpt and ema_decay is not None:
+            ema_sd = ckpt["ema_state"]
+        if sched is not None:
+            for _ in range(step - 1):
+                sched.step()
+
     while step <= num_batches:
         for batch in loader:
             if step > num_batches:

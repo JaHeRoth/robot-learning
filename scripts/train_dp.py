@@ -1,6 +1,7 @@
 import os
 from enum import Enum
 from functools import partial
+from pathlib import Path
 
 import diffusers
 import torch
@@ -88,6 +89,7 @@ def train_dp(
     chunk_len: int = 16,
     n_action_steps: int = 8,
     seed: int = 0,
+    resume_from: Path | None = None,
 ):
     torch.manual_seed(seed)
 
@@ -190,4 +192,5 @@ def train_dp(
         checkpoint_extra={"model_config": config},
         eval_every=eval_every,
         eval_fn=eval_fn,
+        resume_from=resume_from,
     )
