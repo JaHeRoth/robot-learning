@@ -18,10 +18,11 @@ if __name__ == "__main__":  # Guard is required: AsyncVectorEnv re-imports this 
     p.add_argument("--chunk-len", type=int)
     p.add_argument("--n-action-steps", type=int)
     p.add_argument("--resume-from", type=Path)
+    p.add_argument("--checkpoint-every", type=int)
     args = p.parse_args()
 
     kwargs = {"task": TASKS[args.task], "seed": args.seed}
-    for name in ["chunk_len", "n_action_steps", "resume_from"]:
+    for name in ["chunk_len", "n_action_steps", "resume_from", "checkpoint_every"]:
         if getattr(args, name) is not None:
             kwargs[name] = getattr(args, name)
 

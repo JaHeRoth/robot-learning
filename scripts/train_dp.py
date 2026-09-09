@@ -90,6 +90,7 @@ def train_dp(
     n_action_steps: int = 8,
     seed: int = 0,
     resume_from: Path | None = None,
+    checkpoint_every: int = 20_000,
 ):
     if len(task.cameras) > 1:
         raise NotImplementedError("DP supports a single camera only")
@@ -195,4 +196,5 @@ def train_dp(
         eval_every=eval_every,
         eval_fn=eval_fn,
         resume_from=resume_from,
+        checkpoint_every=checkpoint_every,
     )
