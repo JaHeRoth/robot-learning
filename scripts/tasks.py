@@ -6,6 +6,7 @@ from gymnasium.vector import VectorEnv
 from lerobot.envs.factory import make_env, make_env_config
 
 from scripts.eval_so100_flip import make_so100_flip_env
+from scripts.eval_so100_flip_wristcam import make_so100_flip_wristcam_env
 from scripts.eval_so100_reach import make_so100_env
 
 
@@ -48,9 +49,25 @@ SO100_FLIP = Task(
 
 SO100_FLIP_100 = replace(SO100_FLIP, dataset_repo_id="jaheroth/so100_flip_100")
 
+SO100_FLIP_WRISTCAM_100 = Task(
+    dataset_repo_id="jaheroth/so100_flip2_100",
+    make_env=lambda n_envs: make_so100_flip_wristcam_env(n_envs=n_envs, horizon=450),
+    fps=25,
+    cameras={
+        "observation.image": "observation.image",
+        "observation.image_wrist": "observation.image_wrist",
+    },
+    state_key="observation.state",
+    imputed_reward=-0.002,  # 0.002 is expert's mean distance from target on success
+)
+
+SO100_FLIP_WRISTCAM_1K = replace(SO100_FLIP_WRISTCAM_100, dataset_repo_id="jaheroth/so100_flip2_1k")
+
 TASKS = {
     "pusht": PUSHT,
     "so100_reach": SO100_REACH,
     "so100_flip": SO100_FLIP,
     "so100_flip_100": SO100_FLIP_100,
+    "so100_flip_wristcam_100": SO100_FLIP_WRISTCAM_100,
+    "so100_flip_wristcam_1k": SO100_FLIP_WRISTCAM_1K,
 }
