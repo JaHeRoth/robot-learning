@@ -14,6 +14,7 @@ import re
 import time
 from pathlib import Path
 
+import imageio
 import torch
 
 from scripts.act import ACT, ACTPolicy
@@ -52,14 +53,23 @@ def load_policy(ckpt_path: Path, image_keys, n_action_steps: int, device: str, u
                      n_action_steps=n_action_steps), chunk_len
 
 
-def evaluate(env, policy, seeds, n_envs, imputed_reward, cameras, state_key, horizon):
+def evaluate(env, policy, seeds, n_envs, imputed_reward, cameras, state_key, horizon,
+             record_n=0, video_dir=None, step=0, fps=25):
     successes, sums = 0, []
     for i in range(0, len(seeds), n_envs):
         batch = seeds[i:i + n_envs]
         if len(batch) < n_envs:                 # keep the vector env full
             batch = batch + batch[: n_envs - len(batch)]
-        out = my_rollout(env, policy, batch, record_n=0,
+        take = record_n if i == 0 else 0        # only film the first batch
+        out = my_rollout(env, policy, batch, record_n=take,
                          cameras=cameras, state_key=state_key)
+        if take:
+            video_dir.mkdir(parents=True, exist_ok=True)
+            for k in range(take):
+                done_k = out["done"][k]
+                cut = int(done_k.int().argmax()) + 1 if done_k.any() else len(done_k)
+                imageio.mimsave(uri=video_dir / f"step{step:06d}_ep{k}.mp4",
+                                ims=out["pixels"][k, :cut].numpy(), fps=fps)
         succeeded = out["success"].any(dim=1, keepdim=True)
         ended = out["done"].int().argmax(dim=1, keepdim=True)
         steps = torch.arange(out["reward"].shape[1])
@@ -82,12 +92,14 @@ if __name__ == "__main__":
     p.add_argument("--start-seed", type=int, default=50_000, help="disjoint from training evals")
     p.add_argument("--device", default="cpu")
     p.add_argument("--ema", action="store_true")
+    p.add_argument("--record", type=int, default=10, help="episodes to film per checkpoint")
     p.add_argument("--out", type=Path, default=None)
     args = p.parse_args()
 
     task = TASKS[args.task]
     ckpts = sorted(args.run_dir.glob("step_*.pt"),
-                   key=lambda q: int(re.search(r"step_(\d+)", q.name).group(1)))
+                   key=lambda q: int(re.search(r"step_(\d+)", q.name).group(1)),
+                   reverse=True)   # newest first: the most informative one lands soonest
     if not ckpts:
         raise SystemExit(f"no step_*.pt in {args.run_dir}")
     print(f"{len(ckpts)} checkpoints, {args.n_seeds} seeds each, device={args.device}", flush=True)
@@ -104,7 +116,9 @@ if __name__ == "__main__":
         t0 = time.time()
         with torch.no_grad():
             n_ok, sums = evaluate(env, policy, seeds, args.n_envs, task.imputed_reward,
-                                  task.cameras, task.state_key, horizon)
+                                  task.cameras, task.state_key, horizon,
+                                  record_n=args.record, video_dir=args.run_dir / "sweep_videos",
+                                  step=step, fps=task.fps)
         lo, hi = wilson(n_ok, len(seeds))
         mean_reward = sum(sums) / len(sums)
         rows.append(dict(step=step, n_episodes=len(seeds), n_success=n_ok,

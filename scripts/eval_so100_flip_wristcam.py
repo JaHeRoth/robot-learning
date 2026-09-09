@@ -14,11 +14,12 @@ from gymnasium.wrappers import TimeLimit
 from mujoco import MjModel
 
 from scripts.generate_so100_flip_wristcam_data import (
-    FPS, IMG, JAW, OPEN, SCENE, SHELF_TOP, SHELF_XY, Expert, sample_episode, servo_ctrl,
+    CAMERAS, FPS, IMG, JAW, OPEN, SCENE, SHELF_TOP, SHELF_XY, Expert, sample_episode,
+    servo_ctrl,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-HORIZON = 300          # demos run 257 frames; leave the policy some slack
+HORIZON = 450          # demos run 257-331 frames with jitter; leave slack
 POS_TOLERANCE = 0.05   # of the glass origin from the target spot on the shelf
 UPRIGHT = 0.9          # cos of the glass axis against +z
 # Frames the glass must stay upright, on target and untouched before it counts.
@@ -36,7 +37,8 @@ class SO100FlipWristcam(Env):
         self.scratch = mujoco.MjData(mjmodel)
         self.renderer = mujoco.Renderer(mjmodel, height=IMG[0], width=IMG[1])
         self.observation_space = spaces.Dict({
-            "observation.image": spaces.Box(low=0, high=255, shape=(*IMG, 3), dtype=np.uint8),
+            **{k: spaces.Box(low=0, high=255, shape=(*IMG, 3), dtype=np.uint8)
+               for k in CAMERAS},
             "observation.state": spaces.Box(
                 low=mjmodel.jnt_range[:6, 0], high=mjmodel.jnt_range[:6, 1], dtype=np.float32
             ),
@@ -61,11 +63,14 @@ class SO100FlipWristcam(Env):
 
     def _capture_obs(self):
         mujoco.mj_forward(self.mjmodel, self.mjdata)
-        self.renderer.update_scene(self.mjdata, camera="front")
-        return {
-            "observation.image": self.renderer.render(),
-            "observation.state": self.mjdata.qpos[:6].copy().astype(np.float32),
-        }
+        obs = {}
+        # CAMERAS maps the dataset's key -> the camera in the scene, so the
+        # observation the policy sees at eval is built exactly as the data was.
+        for key, cam in CAMERAS.items():
+            self.renderer.update_scene(self.mjdata, camera=cam)
+            obs[key] = self.renderer.render()
+        obs["observation.state"] = self.mjdata.qpos[:6].copy().astype(np.float32)
+        return obs
 
     def _held(self):
         """Is the gripper still touching the glass?"""
