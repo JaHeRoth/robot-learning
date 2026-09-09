@@ -26,11 +26,11 @@ def run_eval(
     record_n: int,
     fps: int,
     imputed_reward: float,  # Credited per step from success onward, to horizon
-    image_key: str,
+    cameras: dict[str, str],
     state_key: str,
 ) -> dict:
     out = my_rollout(
-        env, policy, eval_seeds, record_n=record_n, image_key=image_key, state_key=state_key
+        env, policy, eval_seeds, record_n=record_n, cameras=cameras, state_key=state_key
     )
     succeeded = out["success"].any(dim=1, keepdim=True)
     success_rate = succeeded.float().mean().item()

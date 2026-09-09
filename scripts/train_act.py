@@ -12,8 +12,14 @@ from scripts.tasks import Task
 from scripts.train_common import run_eval, train_loop
 
 
-def act_loss(model, batch, stats, kl_weight):
-    img = batch["observation.image"].unsqueeze(1).cuda()
+def act_loss(model, batch, stats, kl_weight, image_keys):
+    img = torch.stack(
+        [
+            batch[key].cuda()
+            for key in image_keys
+        ],
+        dim=1,
+    )
     state_stats, action_stats = stats["observation.state"], stats["action"]
     proprio = (batch["observation.state"].cuda() - state_stats["mean"]) / state_stats["std"]
     chunk = (batch["action"].cuda() - action_stats["mean"]) / action_stats["std"]
@@ -78,11 +84,11 @@ def train_act(
     env = task.make_env(n_eval_envs)
     eval_seeds = list(range(eval_start_seed, eval_start_seed + n_eval_envs))
     def eval_fn(model, step, out_dir):
-        policy = ACTPolicy(model, dataset_stats=stats, n_action_steps=n_action_steps)
+        policy = ACTPolicy(model, dataset_stats=stats, image_keys=task.cameras.keys(), n_action_steps=n_action_steps)
         return run_eval(
             env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps,
             imputed_reward=task.imputed_reward,
-            image_key=task.image_key,
+            cameras=task.cameras,
             state_key=task.state_key,
         )
 
@@ -90,7 +96,7 @@ def train_act(
         model=model,
         loader=loader,
         opt=opt,
-        loss_fn=partial(act_loss, kl_weight=kl_weight),
+        loss_fn=partial(act_loss, kl_weight=kl_weight, image_keys=task.cameras.keys()),
         num_batches=num_batches,
         out_dir="outputs/my_act",
         stats=stats,

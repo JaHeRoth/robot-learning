@@ -91,6 +91,8 @@ def train_dp(
     seed: int = 0,
     resume_from: Path | None = None,
 ):
+    if len(task.cameras) > 1:
+        raise NotImplementedError("DP supports a single camera only")
     torch.manual_seed(seed)
 
     batch_size = 64
@@ -174,7 +176,7 @@ def train_dp(
         return run_eval(
             env, policy, eval_seeds, step, out_dir=out_dir, record_n=n_recorded, fps=fps,
             imputed_reward=task.imputed_reward,
-            image_key=task.image_key,
+            cameras=task.cameras,
             state_key=task.state_key,
         )
 

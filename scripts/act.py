@@ -1,4 +1,5 @@
 from collections import deque
+from collections.abc import Collection
 from dataclasses import dataclass
 
 import torch
@@ -195,6 +196,7 @@ class ACTPolicy(Module):
         self,
         model: ACT,
         dataset_stats: dict[str, dict[str, Tensor]],
+        image_keys: Collection[str],
         n_action_steps: int | None = None,
         te_factor: float | None = None
     ):
@@ -205,6 +207,7 @@ class ACTPolicy(Module):
         self.register_buffer("state_std", dataset_stats["observation.state"]["std"])
         self.register_buffer("action_mean", dataset_stats["action"]["mean"])
         self.register_buffer("action_std", dataset_stats["action"]["std"])
+        self.image_keys = image_keys
         self.n_action_steps = n_action_steps
         self.te_factor = te_factor
         self.n_steps_till_action = 0
@@ -221,7 +224,7 @@ class ACTPolicy(Module):
         return (x * std) + mean
 
     def _compute_next_chunk(self, policy_in: dict[str, Tensor]) -> Tensor:
-        img = policy_in["observation.image"].unsqueeze(1)
+        img = torch.stack([policy_in[key] for key in self.image_keys], dim=1)
         proprio = self._normalize(
             policy_in["observation.state"], self.state_mean, self.state_std
         )

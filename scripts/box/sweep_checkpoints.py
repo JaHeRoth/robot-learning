@@ -38,7 +38,7 @@ def find(state: dict, suffix: str):
     raise KeyError(suffix)
 
 
-def load_policy(ckpt_path: Path, n_action_steps: int, device: str, use_ema: bool):
+def load_policy(ckpt_path: Path, image_keys, n_action_steps: int, device: str, use_ema: bool):
     ck = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = ck["ema_state"] if use_ema and "ema_state" in ck else ck["model_state"]
     # Shapes carry the architecture, so a checkpoint is self-describing.
@@ -48,17 +48,18 @@ def load_policy(ckpt_path: Path, n_action_steps: int, device: str, use_ema: bool
     model.load_state_dict(state)
     model.to(device).eval()
     stats = {k: {a: t.to(device).float() for a, t in v.items()} for k, v in ck["stats"].items()}
-    return ACTPolicy(model, dataset_stats=stats, n_action_steps=n_action_steps), chunk_len
+    return ACTPolicy(model, dataset_stats=stats, image_keys=image_keys,
+                     n_action_steps=n_action_steps), chunk_len
 
 
-def evaluate(env, policy, seeds, n_envs, imputed_reward, image_key, state_key, horizon):
+def evaluate(env, policy, seeds, n_envs, imputed_reward, cameras, state_key, horizon):
     successes, sums = 0, []
     for i in range(0, len(seeds), n_envs):
         batch = seeds[i:i + n_envs]
         if len(batch) < n_envs:                 # keep the vector env full
             batch = batch + batch[: n_envs - len(batch)]
         out = my_rollout(env, policy, batch, record_n=0,
-                         image_key=image_key, state_key=state_key)
+                         cameras=cameras, state_key=state_key)
         succeeded = out["success"].any(dim=1, keepdim=True)
         ended = out["done"].int().argmax(dim=1, keepdim=True)
         steps = torch.arange(out["reward"].shape[1])
@@ -98,11 +99,12 @@ if __name__ == "__main__":
     rows = []
     for ckpt in ckpts:
         step = int(re.search(r"step_(\d+)", ckpt.name).group(1))
-        policy, chunk_len = load_policy(ckpt, args.n_action_steps, args.device, args.ema)
+        policy, chunk_len = load_policy(ckpt, task.cameras.keys(), args.n_action_steps,
+                                        args.device, args.ema)
         t0 = time.time()
         with torch.no_grad():
             n_ok, sums = evaluate(env, policy, seeds, args.n_envs, task.imputed_reward,
-                                  task.image_key, task.state_key, horizon)
+                                  task.cameras, task.state_key, horizon)
         lo, hi = wilson(n_ok, len(seeds))
         mean_reward = sum(sums) / len(sums)
         rows.append(dict(step=step, n_episodes=len(seeds), n_success=n_ok,
