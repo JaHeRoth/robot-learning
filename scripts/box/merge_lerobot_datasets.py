@@ -27,7 +27,8 @@ def _write_jsonl(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
-def merge(out_dir: Path, shards: list[Path], limit: int | None = None) -> dict:
+def merge(out_dir: Path, shards: list[Path], limit: int | None = None,
+          keep: set[int] | None = None) -> dict:
     info = json.loads((shards[0] / "meta/info.json").read_text())
     chunks_size = info["chunks_size"]
     video_keys = [k for k, v in info["features"].items() if v["dtype"] == "video"]
@@ -50,6 +51,8 @@ def merge(out_dir: Path, shards: list[Path], limit: int | None = None) -> dict:
         for old_ep in sorted(s_eps):
             if limit is not None and new_ep >= limit:
                 break
+            if keep is not None and old_ep not in keep:
+                continue
             src = shard / s_info["data_path"].format(
                 episode_chunk=old_ep // chunks_size, episode_index=old_ep)
             df = pd.read_parquet(src)
@@ -98,5 +101,8 @@ if __name__ == "__main__":
     p.add_argument("out_dir", type=Path)
     p.add_argument("shards", type=Path, nargs="+")
     p.add_argument("--limit", type=int, default=None, help="stop after this many episodes")
+    p.add_argument("--keep", type=Path, default=None,
+                   help="JSON file holding a list of source episode indices to keep")
     args = p.parse_args()
-    merge(args.out_dir, args.shards, args.limit)
+    keep = set(json.loads(args.keep.read_text())) if args.keep else None
+    merge(args.out_dir, args.shards, args.limit, keep)

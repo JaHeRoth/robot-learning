@@ -1,0 +1,69 @@
+<mujoco model="so_arm100 flip scene">
+  <include file="so_arm100.xml"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="45" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <material name="floor" rgba="0.35 0.36 0.38 1" reflectance="0.1"/>
+    <material name="shelf" rgba="0.80 0.65 0.44 1"/>
+    <!-- Deep red: the arm is white and the shelf pale wood, so the thing the policy
+         has to localise is the only saturated colour in the frame. -->
+    <material name="glass" rgba="0.50 0.10 0.13 1" reflectance="0.35" specular="0.9" shininess="0.9"/>
+  </asset>
+
+  <worldbody>
+    <!-- Behind and above the shoulder rather than facing the arm, which reads as the
+         robot seeing over its own arm. Placed where the arm occludes the glass least:
+         swinging further round to a true over-the-shoulder view hides the glass
+         completely when it spawns at the left edge of its box. -->
+    <camera name="front" fovy="45" pos="0.2667 0.2517 0.4556"
+            xyaxes="-0.9388 0.3444 0.0000 -0.1998 -0.5448 0.8144"/>
+    <!-- Off-axis so lifted objects cast displaced shadows: the only depth cue a fixed camera gets -->
+    <light pos="0.5 0.3 1.2" dir="-0.35 -0.25 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="floor"/>
+
+    <geom name="shelf" type="box" pos="0.24 -0.16 0.05" size="0.055 0.055 0.05" material="shelf"/>
+
+    <!-- Wine glass, upside down: quat flips it so the bowl rim rests on the floor and
+         the stem points up. Grasped at the stem; base and bowl are the flanges. -->
+    <body name="glass" pos="0 -0.325 0.106" quat="0 1 0 0">
+      <freejoint name="glass"/>
+      <geom name="glass_base" type="cylinder" size="0.020 0.003" pos="0 0 0.003"
+            material="glass" density="120" friction="1.0 0.05 0.001"/>
+      <geom name="glass_stem" type="cylinder" size="0.005 0.022" pos="0 0 0.028"
+            material="glass" density="120" friction="1.5 0.05 0.001"/>
+      <!-- Bowl: rounded where it meets the stem, flat-open at the rim. Upside down the
+           rim's flat face is what rests on the floor, so the curve costs no stability. -->
+      <geom name="glass_bowl_dome" type="ellipsoid" size="0.028 0.028 0.028" pos="0 0 0.078"
+            material="glass" density="120" friction="1.0 0.05 0.001"/>
+      <geom name="glass_bowl_rim" type="cylinder" size="0.028 0.014" pos="0 0 0.092"
+            material="glass" density="120" friction="1.0 0.05 0.001"/>
+    </body>
+  </worldbody>
+
+  <!-- The stem is a smooth 10 mm cylinder gripped by two 1 mm pads, so by default
+       the glass pivots out of the jaws under its own weight during the flip.
+       condim 6 adds torsional and rolling friction, which is what stops it. -->
+  <contact>
+    <pair geom1="fixed_jaw_pad_1" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="fixed_jaw_pad_2" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="fixed_jaw_pad_3" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="fixed_jaw_pad_4" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="moving_jaw_pad_1" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="moving_jaw_pad_2" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="moving_jaw_pad_3" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+    <pair geom1="moving_jaw_pad_4" geom2="glass_stem" condim="6" friction="2 2 0.1 0.02 0.02" solref="0.004 1" solimp="0.98 0.999 0.001"/>
+  </contact>
+  <!-- Full start state: the arm's own `home` key predates the glass, so loading it
+       would reset the free joint to the origin. -->
+  <keyframe>
+    <key name="start"
+         qpos="0 -1.57 1.57 1.57 -1.57 0  0 -0.325 0.106  0 1 0 0"
+         ctrl="0 -1.57 1.57 1.57 -1.57 0"/>
+  </keyframe>
+</mujoco>
