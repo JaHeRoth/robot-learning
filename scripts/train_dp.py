@@ -71,9 +71,9 @@ def fmp_loss(model, batch, stats, crop):
     loss_mask = ~batch["action_is_pad"].cuda().unsqueeze(-1)
 
     noise = torch.randn_like(chunk)
-    velocity = noise - chunk
+    velocity = chunk - noise
     t = torch.rand(size=chunk.shape[0:1]).cuda()
-    noised_chunk = (1 - t[:, None, None]) * chunk + t[:, None, None] * noise
+    noised_chunk = t[:, None, None] * chunk + (1 - t[:, None, None]) * noise
     velocity_pred = model(imgs, proprios, t, chunk=noised_chunk)
     return ((velocity_pred - velocity).pow(2) * loss_mask).mean()
 

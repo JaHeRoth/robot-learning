@@ -328,7 +328,7 @@ class FlowMatchingModel(Module):
         self,
         imgs: Tensor,  # (B, n_obs, n_channels, height, width)
         proprios: Tensor,  # (B, n_obs, dof)
-        t: Tensor,  # (B,), normalized time in [0, 1]
+        t: Tensor,  # (B,), normalized time in [0, 1], 0 = noise, 1 = data
         chunk: Tensor,  # (B, chunk_len, dof)
     ) -> Tensor:
         imgs_encoding = self.imgs_encoder(imgs)
@@ -347,13 +347,13 @@ class FlowMatchingModel(Module):
             proprios.size(0), self.config.chunk_len, proprios.size(-1), device=device
         )
         imgs_encoding = self.imgs_encoder(imgs)
-        ts = torch.linspace(start=0, end=1, steps=n_steps + 1).tolist()[:0:-1]
+        ts = torch.linspace(start=0, end=1, steps=n_steps + 1).tolist()[:-1]
         for t in ts:
             t_tensor = torch.full(
                 size=(len(imgs),), fill_value=t, device=device
             )  # (B,)
             velocity = self.denoiser(imgs_encoding, proprios, t_tensor, chunk)
-            chunk -= step_size * velocity
+            chunk += step_size * velocity
         return chunk
 
 
