@@ -34,13 +34,13 @@ class ActorCritic(Module):
 
 
 class Trajectories:
-    def __init__(self, states, actions, rewards, dones, values, logprob):
+    def __init__(self, states, actions, rewards, dones, values, logprobs):
         self.states = states
         self.actions = actions
         self.rewards = rewards
         self.dones = dones
         self.values = values  # Length 1 more than all the others
-        self.logprob = logprob
+        self.logprobs = logprobs
         self.advantages = self._build_advantages(gamma=gamma, lambda_=lambda_)  # TODO: Get these from somewhere
         self.returns = self.advantages + self.values[:-1]
         self._flatten()
@@ -57,7 +57,7 @@ class Trajectories:
         return torch.vstack(advantages)
 
     def _flatten(self):
-        # TODO: Flatten dims 0 and 1 of states, actions, logprob, advantages and returns
+        # TODO: Flatten dims 0 and 1 of states, actions, logprobs, advantages and returns
         raise NotImplementedError
 
 
@@ -93,8 +93,8 @@ for _ in tqdm(range(n_cycles)):
         batch = traj.slice(idx)
         batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
         curr_action_dist, curr_values = actor_critic(batch.states)
-        curr_logprob = curr_action_dist.log_prob(batch.actions)  # Only for executed actions, so shape=(B,)
-        propensity_weight = (curr_logprob - batch.logprob).exp()
+        curr_logprobs = curr_action_dist.log_prob(batch.actions)  # Only for executed actions, so shape=(B,)
+        propensity_weight = (curr_logprobs - batch.logprobs).exp()
         critic_loss = (curr_values - batch.returns).pow(2).mean()
         actor_loss = -(
             torch.minimum(
