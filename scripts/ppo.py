@@ -53,6 +53,15 @@ class Transitions:
     logprobs: Tensor
     advantages: Tensor
     returns: Tensor
+
+    def __getitem__(self, idx: int | Tensor):
+        return Transitions(
+            states=self.states[idx],
+            actions=self.actions[idx],
+            logprobs=self.logprobs[idx],
+            advantages=self.advantages[idx],
+            returns=self.returns[idx],
+        )
     
 
 def build_advantages(rollout: Rollout, gamma: float, lambda_: float):
@@ -109,7 +118,7 @@ for _ in tqdm(range(n_cycles)):
         [torch.randperm(len(transitions.states)) for _ in range(n_epochs)]
     ).split(batch_size)
     for idx in batch_indices:
-        batch = transitions.slice(idx)
+        batch = transitions[idx]
         batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
         curr_action_dist, curr_values = actor_critic(batch.states)
         curr_logprobs = curr_action_dist.log_prob(batch.actions)  # Only for executed actions, so shape=(B,)
