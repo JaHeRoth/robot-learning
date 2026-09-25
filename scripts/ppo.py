@@ -12,44 +12,53 @@
 
 import torch
 from torch import Tensor
-from torch.nn import Module, Sequential, Linear, ReLU, Softmax
+from torch.distributions import Categorical
+from torch.nn import Module, Sequential, Linear, ReLU
 from tqdm import tqdm
 from torch.optim import AdamW
-from gymnasium import VectorEnv
+from gymnasium.vector import VectorEnv
+from torch.nn.utils import clip_grad_norm_
 
 class ActorCritic(Module):
     def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 50):
         super().__init__()
         self.actor = Sequential(
-            Linear(state_dim, hidden_dim), ReLU(), Linear(hidden_dim, action_dim), Softmax()
+            Linear(state_dim, hidden_dim), ReLU(), Linear(hidden_dim, action_dim)
         )
         self.critic = Sequential(
             Linear(state_dim, hidden_dim), ReLU(), Linear(hidden_dim, 1)
         )
 
-    def forward(self, state: Tensor) -> tuple[Tensor, Tensor]:
-        return self.actor(state), self.critic(state)
+    def forward(self, state: Tensor) -> tuple[Categorical, Tensor]:
+        return Categorical(logits=self.actor(state)), self.critic(state).squeeze(-1)
 
 
 class Trajectories:
-    def __init__(self, states, actions, rewards, dones, values, logprobs, final_val):
+    def __init__(self, states, actions, rewards, dones, values, logprob):
         self.states = states
         self.actions = actions
         self.rewards = rewards
         self.dones = dones
         self.values = values  # Length 1 more than all the others
-        self.logprobs = logprobs
-        self.final_val = final_val
-        self.advantages = self.build_advantages_(gamma=gamma, lambda_=lambda_)  # TODO: Get these from somewhere
+        self.logprob = logprob
+        self.advantages = self._build_advantages(gamma=gamma, lambda_=lambda_)  # TODO: Get these from somewhere
+        self.returns = self.advantages + self.values[:-1]
+        self._flatten()
 
-    def build_advantages_(self, gamma: float, lambda_: float):
+    def _build_advantages(self, gamma: float, lambda_: float):
         advantages = [None] * len(self.states)
+        advantage = 0.0
         for i in reversed(range(len(self.states))):
-            advantages[i] = (
-                self.rewards[i] + (1 - self.dones[i]) * gamma * self.values[i + 1] - self.values[i]
-                + (1 - self.dones[i]) * gamma * lambda_ * advantages[i + 1]
+            advantages[i] = advantage = (
+                self.rewards[i] + (1 - self.dones[i].float()) * gamma * self.values[i + 1] - self.values[i]
+                + (1 - self.dones[i].float()) * gamma * lambda_ * advantage
             )
+            
         return torch.vstack(advantages)
+
+    def _flatten(self):
+        # TODO: Flatten dims 0 and 1 of all tensors
+        raise NotImplementedError
 
 
 def gen_trajectories(actor_critic: ActorCritic, envs: VectorEnv, horizon: int) -> Trajectories:
@@ -60,36 +69,42 @@ def gen_trajectories(actor_critic: ActorCritic, envs: VectorEnv, horizon: int) -
 
 n_envs = 16
 n_cycles = 1000
-n_steps = 100
+n_epochs = 3
 horizon = 300
+mb_size = 64
 
 gamma = 0.99
 lambda_ = 0.95
 diversity_factor = 0.01
 eps = 0.2
+lr = 3e-4
+weight_decay = 0.0
+max_grad_norm = 0.5
 
 envs = TODO
 actor_critic = ActorCritic(TODO)  # TODO: Get from envs
-opt = AdamW(actor_critic.parameters())
+opt = AdamW(actor_critic.parameters(), lr=lr, weight_decay=weight_decay)
 for _ in tqdm(range(n_cycles)):
     traj = gen_trajectories(actor_critic, envs, horizon)
-    batch_permutes = None
-    for _ in range(n_steps):
-        if batch_permutes is None:
-            batch_permutes = torch.randperm(len(traj.states))
-        batch = traj.slice(batch_permutes.next())
+    minibatch_indices = torch.cat(
+        [torch.randperm(len(traj.states)) for _ in range(n_epochs)]
+    ).split(mb_size)
+    for idx in minibatch_indices:
+        batch = traj.slice(idx)
         batch.advantages = (batch.advantages - batch.advantages.mean()) / batch.advantages.std()
-        curr_logprobs, curr_values = actor_critic(batch.states)
-        propensity_weight = (curr_logprobs[batch.actions] - batch.logprobs[batch.actions]).exp()
-        critic_loss = (curr_values - (batch.advantages + batch.values)).pow(2).mean()
+        curr_action_dist, curr_values = actor_critic(batch.states)
+        curr_logprobs = curr_action_dist.log_prob()
+        propensity_weight = (curr_logprobs[batch.actions] - batch.logprob).exp()
+        critic_loss = (curr_values - batch.returns).pow(2).mean()
         actor_loss = -(
             torch.minimum(
                 propensity_weight * batch.advantages,
                 propensity_weight.clip(1 - eps, 1 + eps) * batch.advantages,
             ).mean()
-            + diversity_factor * curr_logprobs.entropy(axis=1).mean()
+            + diversity_factor * curr_action_dist.entropy(axis=1).mean()
         )
         loss = critic_loss + actor_loss
         opt.zero_grad()
         loss.backward()
+        clip_grad_norm_(actor_critic.parameters(), max_grad_norm)
         opt.step()
