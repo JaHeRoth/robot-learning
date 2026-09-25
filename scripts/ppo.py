@@ -10,6 +10,8 @@
 #  Define loss as loss_actor + c1 * loss_critic - c2 * bonus_diversity
 #  Backpropagate and optimizer step
 
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
 from torch.distributions import Categorical
@@ -33,35 +35,51 @@ class ActorCritic(Module):
         return Categorical(logits=self.actor(state)), self.critic(state).squeeze(-1)
 
 
-class Trajectories:
-    def __init__(self, states, actions, rewards, dones, values, logprobs):
-        self.states = states
-        self.actions = actions
-        self.rewards = rewards
-        self.dones = dones
-        self.values = values  # Length 1 more than all the others
-        self.logprobs = logprobs
-        self.advantages = self._build_advantages(gamma=gamma, lambda_=lambda_)  # TODO: Get these from somewhere
-        self.returns = self.advantages + self.values[:-1]
-        self._flatten()
+@dataclass
+class Rollout:
+    # All have shape (T, n_envs) except values, which has shape (T + 1, n_envs)
+    states: Tensor
+    actions: Tensor
+    rewards: Tensor
+    dones: Tensor
+    values: Tensor
+    logprobs: Tensor
 
-    def _build_advantages(self, gamma: float, lambda_: float):
-        advantages = [None] * len(self.states)
-        advantage = 0.0
-        for i in reversed(range(len(self.states))):
-            advantages[i] = advantage = (
-                self.rewards[i] + (1 - self.dones[i].float()) * gamma * self.values[i + 1] - self.values[i]
-                + (1 - self.dones[i].float()) * gamma * lambda_ * advantage
-            )
-            
-        return torch.vstack(advantages)
+@dataclass
+class Transitions:
+    # All have shape (B=T*n_envs,)
+    states: Tensor
+    actions: Tensor
+    logprobs: Tensor
+    advantages: Tensor
+    returns: Tensor
+    
 
-    def _flatten(self):
-        # TODO: Flatten dims 0 and 1 of states, actions, logprobs, advantages and returns
-        raise NotImplementedError
+def build_advantages(rollout: Rollout, gamma: float, lambda_: float):
+    advantages = [None] * len(rollout.states)
+    advantage = 0.0
+    for i in reversed(range(len(rollout.states))):
+        advantages[i] = advantage = (
+            rollout.rewards[i] + (1 - rollout.dones[i].float()) * gamma * rollout.values[i + 1] - rollout.values[i]
+            + (1 - rollout.dones[i].float()) * gamma * lambda_ * advantage
+        )
+        
+    return torch.vstack(advantages)
 
 
-def gen_trajectories(actor_critic: ActorCritic, envs: VectorEnv, horizon: int) -> Trajectories:
+def build_transitions(rollout: Rollout, gamma: float, lambda_: float):
+    advantages = build_advantages(rollout=rollout, gamma=gamma, lambda_=lambda_)
+    returns = advantages + rollout.values[:-1]
+    return Transitions(
+        states=rollout.states.flatten(0, 1),
+        actions=rollout.actions.flatten(0, 1),
+        logprobs=rollout.logprobs.flatten(0, 1),
+        advantages=advantages.flatten(0, 1),
+        returns=returns.flatten(0, 1),
+    )
+
+
+def sim_rollout(actor_critic: ActorCritic, envs: VectorEnv, horizon: int) -> Rollout:
     with torch.no_grad():
         for _ in range(horizon):
             raise NotImplementedError
@@ -71,7 +89,7 @@ n_envs = 16
 n_cycles = 1000
 n_epochs = 3
 horizon = 300
-mb_size = 64
+batch_size = 64
 
 gamma = 0.99
 lambda_ = 0.95
@@ -85,12 +103,13 @@ envs = TODO
 actor_critic = ActorCritic(TODO)  # TODO: Get from envs
 opt = AdamW(actor_critic.parameters(), lr=lr, weight_decay=weight_decay)
 for _ in tqdm(range(n_cycles)):
-    traj = gen_trajectories(actor_critic, envs, horizon)
-    minibatch_indices = torch.cat(
-        [torch.randperm(len(traj.states)) for _ in range(n_epochs)]
-    ).split(mb_size)
-    for idx in minibatch_indices:
-        batch = traj.slice(idx)
+    rollout = sim_rollout(actor_critic, envs, horizon)
+    transitions = build_transitions(rollout=rollout, gamma=gamma, lambda_=lambda_)
+    batch_indices = torch.cat(
+        [torch.randperm(len(transitions.states)) for _ in range(n_epochs)]
+    ).split(batch_size)
+    for idx in batch_indices:
+        batch = transitions.slice(idx)
         batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
         curr_action_dist, curr_values = actor_critic(batch.states)
         curr_logprobs = curr_action_dist.log_prob(batch.actions)  # Only for executed actions, so shape=(B,)
