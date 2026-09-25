@@ -19,9 +19,11 @@ from torch.nn import Module, Sequential, Linear, ReLU
 from tqdm import tqdm
 from torch.optim import AdamW
 import gymnasium
+from gymnasium import Wrapper
 from gymnasium.vector import VectorEnv, SyncVectorEnv
 from torch.nn.utils import clip_grad_norm_
 from numpy import ndarray
+from gymnasium.wrappers import RecordEpisodeStatistics
 
 class ActorCritic(Module):
     def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 50):
@@ -90,8 +92,9 @@ def build_transitions(rollout: Rollout, gamma: float, lambda_: float):
     )
 
 
-def sim_rollout(actor_critic: ActorCritic, envs: VectorEnv, horizon: int, start_state: ndarray) -> tuple[Rollout, ndarray]:
+def sim_rollout(actor_critic: ActorCritic, envs: VectorEnv | Wrapper, horizon: int, start_state: ndarray) -> tuple[Rollout, ndarray, list[float]]:
     states, actions, rewards, dones, values, logprobs = [], [], [], [], [], []
+    episode_returns = []
     obs = start_state
     with torch.no_grad():
         for _ in range(horizon):
@@ -104,6 +107,8 @@ def sim_rollout(actor_critic: ActorCritic, envs: VectorEnv, horizon: int, start_
             dones.append(torch.tensor(terminated | truncated))
             values.append(value)
             logprobs.append(action_dist.log_prob(action))
+            if "episode" in info:
+                episode_returns.extend(info["episode"]["r"][info["_episode"]].tolist())
         values.append(actor_critic(torch.tensor(obs, dtype=torch.float32))[1])
     return (
         Rollout(
@@ -113,7 +118,9 @@ def sim_rollout(actor_critic: ActorCritic, envs: VectorEnv, horizon: int, start_
             dones=torch.stack(dones),
             values=torch.stack(values),
             logprobs=torch.stack(logprobs),
-        ), obs
+        ),
+        obs,
+        episode_returns,
     )
 
 
@@ -131,11 +138,13 @@ lr = 3e-4
 weight_decay = 0.0
 max_grad_norm = 0.5
 
-envs = SyncVectorEnv(
-    [
-        lambda: gymnasium.make("CartPole-v1")
-        for _ in range(n_envs)
-    ]
+envs = RecordEpisodeStatistics(
+    SyncVectorEnv(
+        [
+            lambda: gymnasium.make("CartPole-v1")
+            for _ in range(n_envs)
+        ]
+    )
 )
 start_state, info = envs.reset(seed=list(range(envs.num_envs)))
 actor_critic = ActorCritic(
@@ -143,8 +152,11 @@ actor_critic = ActorCritic(
     action_dim=envs.single_action_space.n,
 )
 opt = AdamW(actor_critic.parameters(), lr=lr, weight_decay=weight_decay)
-for _ in tqdm(range(n_cycles)):
-    rollout, start_state = sim_rollout(actor_critic, envs, horizon, start_state)
+pbar = tqdm(range(n_cycles))
+for _ in pbar:
+    rollout, start_state, episode_returns = sim_rollout(actor_critic, envs, horizon, start_state)
+    if episode_returns:
+        pbar.set_postfix(episode_return=sum(episode_returns) / len(episode_returns))
     transitions = build_transitions(rollout=rollout, gamma=gamma, lambda_=lambda_)
     batch_indices = torch.cat(
         [torch.randperm(len(transitions.states)) for _ in range(n_epochs)]
