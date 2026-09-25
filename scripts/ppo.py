@@ -57,7 +57,7 @@ class Trajectories:
         return torch.vstack(advantages)
 
     def _flatten(self):
-        # TODO: Flatten dims 0 and 1 of all tensors
+        # TODO: Flatten dims 0 and 1 of states, actions, logprob, advantages and returns
         raise NotImplementedError
 
 
@@ -91,17 +91,17 @@ for _ in tqdm(range(n_cycles)):
     ).split(mb_size)
     for idx in minibatch_indices:
         batch = traj.slice(idx)
-        batch.advantages = (batch.advantages - batch.advantages.mean()) / batch.advantages.std()
+        batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
         curr_action_dist, curr_values = actor_critic(batch.states)
-        curr_logprobs = curr_action_dist.log_prob()
-        propensity_weight = (curr_logprobs[batch.actions] - batch.logprob).exp()
+        curr_logprob = curr_action_dist.log_prob(batch.actions)  # Only for executed actions, so shape=(B,)
+        propensity_weight = (curr_logprob - batch.logprob).exp()
         critic_loss = (curr_values - batch.returns).pow(2).mean()
         actor_loss = -(
             torch.minimum(
                 propensity_weight * batch.advantages,
                 propensity_weight.clip(1 - eps, 1 + eps) * batch.advantages,
             ).mean()
-            + diversity_factor * curr_action_dist.entropy(axis=1).mean()
+            + diversity_factor * curr_action_dist.entropy().mean()
         )
         loss = critic_loss + actor_loss
         opt.zero_grad()
