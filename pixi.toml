@@ -10,9 +10,6 @@ version = "0.1.0"
 [activation.env]
 KMP_DUPLICATE_LIB_OK = "TRUE"
 
-[tasks]
-eval = "python scripts/eval_quiet.py"
-
 # uvc-util is macOS-only; settings reset on replug, so teleop re-applies them
 [target.osx-arm64.tasks]
 lock-cams = """
