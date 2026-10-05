@@ -35,6 +35,20 @@ lerobot-teleoperate \
     --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem58FA1026071 --teleop.id=leader \
     --display_data=true"""
 
+# extra args append and override, e.g. pixi run record --dataset.repo_id=jacob/foo
+[target.osx-arm64.tasks.record]
+depends-on = ["lock-cams"]
+cmd = """
+lerobot-record \
+    --robot.type=so101_follower --robot.port=/dev/cu.usbmodem5C4C1264891 --robot.id=follower \
+    --robot.cameras="{ \
+        innomaker: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, rotation: 180}, \
+        wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 5}}" \
+    --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem58FA1026071 --teleop.id=leader \
+    --dataset.single_task="Touch the bullseye with the gripper" \
+    --dataset.fps=20 --dataset.episode_time_s=10 --dataset.reset_time_s=8 \
+    --dataset.push_to_hub=false --display_data=true"""
+
 [dependencies]
 python = ">=3.12,<3.13"
 wandb = ">=0.28.2,<0.29"
