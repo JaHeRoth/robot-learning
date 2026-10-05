@@ -5,8 +5,9 @@ from typing import Callable
 from gymnasium.vector import VectorEnv
 from lerobot.envs.factory import make_env, make_env_config
 
-from sim.flip.env import make_so100_flip_env
-from sim.flip.env_wristcam import make_so100_flip_wristcam_env
+from sim.flip.env import make_env as make_flip_env
+from sim.flip.flip import FLIP
+from sim.flip.wristcam import WRISTCAM
 from sim.reach.env import make_so100_env
 
 
@@ -40,7 +41,7 @@ SO100_REACH = Task(
 
 SO100_FLIP = Task(
     dataset_repo_id="jaheroth/so100_flip",
-    make_env=lambda n_envs: make_so100_flip_env(n_envs=n_envs, horizon=300),
+    make_env=lambda n_envs: make_flip_env(FLIP, n_envs=n_envs, horizon=300),
     fps=25,
     cameras={"observation.image": "observation.image"},
     state_key="observation.state",
@@ -51,7 +52,7 @@ SO100_FLIP_100 = replace(SO100_FLIP, dataset_repo_id="jaheroth/so100_flip_100")
 
 SO100_FLIP_WRISTCAM_100 = Task(
     dataset_repo_id="jaheroth/so100_flip2_100",
-    make_env=lambda n_envs: make_so100_flip_wristcam_env(n_envs=n_envs, horizon=450),
+    make_env=lambda n_envs: make_flip_env(WRISTCAM, n_envs=n_envs, horizon=450),
     fps=25,
     cameras={
         "observation.image": "observation.image",
