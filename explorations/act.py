@@ -1,6 +1,6 @@
 # %%
 import torch
-from scripts.act import ACT, ACTConfig
+from il.act import ACT, ACTConfig
 
 # %%
 batch_size = 2

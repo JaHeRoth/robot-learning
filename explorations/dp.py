@@ -1,6 +1,6 @@
 # %%
 import torch
-from scripts.dp import DiffusionModel, GenConfig
+from il.dp import DiffusionModel, GenConfig
 
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionConditionalUnet1d

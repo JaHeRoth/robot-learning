@@ -4,7 +4,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 # %%
-path = "scenes/so100_reach/scene.xml"
+path = "sim/reach/scene.xml"
 model = mujoco.MjModel.from_xml_path(path)
 data = mujoco.MjData(model)
 
