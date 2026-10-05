@@ -13,6 +13,28 @@ KMP_DUPLICATE_LIB_OK = "TRUE"
 [tasks]
 eval = "python scripts/eval_quiet.py"
 
+# uvc-util is macOS-only; settings reset on replug, so teleop re-applies them
+[target.osx-arm64.tasks]
+lock-cams = """
+tools/uvc-util -V 0x32e6:0x9005 \
+    -s auto-exposure-mode=1 -s exposure-time-abs=250 -s gamma=200 \
+    -s auto-white-balance-temp=false -s white-balance-temp=2800 && \
+tools/uvc-util -V 0x0c45:0x6366 \
+    -s auto-exposure-mode=1 -s exposure-time-abs=250 -s gain=0 \
+    -s auto-white-balance-temp=false -s white-balance-temp=3200"""
+
+# wrist cam reports 5 fps to OpenCV but delivers ~22.5
+[target.osx-arm64.tasks.teleop]
+depends-on = ["lock-cams"]
+cmd = """
+lerobot-teleoperate \
+    --robot.type=so101_follower --robot.port=/dev/cu.usbmodem5C4C1264891 --robot.id=follower \
+    --robot.cameras="{ \
+        innomaker: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, rotation: 180}, \
+        wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 5}}" \
+    --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem58FA1026071 --teleop.id=leader \
+    --display_data=true"""
+
 [dependencies]
 python = ">=3.12,<3.13"
 wandb = ">=0.28.2,<0.29"
